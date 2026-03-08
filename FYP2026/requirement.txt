@@ -1,8 +1,0 @@
-streamlit
-pandas
-faker
-langchain
-langchain-community
-sqlalchemy
-langchain-google-genai
-google-generativeai
