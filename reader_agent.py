@@ -1,24 +1,30 @@
 import os
+from dotenv import load_dotenv
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
-from langchain_google_genai import GoogleGenerativeAIEmbeddings, ChatGoogleGenerativeAI
+from langchain_huggingface import HuggingFaceEmbeddings # 👈 Swapped to Local Embeddings
+from langchain_groq import ChatGroq # 👈 Swapped to Groq LLM
+
+# Load API key
+load_dotenv()
 
 class ReaderAgent:
     def __init__(self):
-        # 1. Initialize Embeddings (Used to turn text into numbers/vectors)
-        self.embeddings = GoogleGenerativeAIEmbeddings(model="models/gemini-embedding-001")
+        # 1. Initialize Local Embeddings (Runs on your machine, 100% free, no rate limits)
+        self.embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
         
-        # 2. Initialize LLM (The Brain that answers questions about the PDF)
-        self.llm = ChatGoogleGenerativeAI(
-            model="gemini-2.5-flash",
-            temperature=0
+        # 2. Initialize Groq LLM (The ultra-fast brain)
+        self.llm = ChatGroq(
+            model="llama-3.3-70b-versatile",
+            temperature=0,
+            api_key=os.getenv("GROQ_API_KEY")
         )
         self.vector_store = None
 
     def ingest_pdf(self, pdf_file_path):
         """
-        Reads a PDF, breaks it into small chunks, and saves it in a searchable index.
+        Reads a PDF, breaks it into small chunks, and saves it in a searchable local index.
         """
         try:
             loader = PyPDFLoader(pdf_file_path)
@@ -27,7 +33,6 @@ class ReaderAgent:
             if not pages:
                 return False, "PDF appears to be empty."
 
-            # Split text into 1000-character chunks so Gemini can read it easily
             text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
             chunks = text_splitter.split_documents(pages)
             
@@ -40,7 +45,7 @@ class ReaderAgent:
 
     def extract_rule_parameters(self, user_query):
         """
-        Searches the PDF using a Manual RAG approach (Bypassing broken Chains).
+        Searches the PDF using a Manual RAG approach.
         """
         if not self.vector_store:
             return "Error: No document loaded. Please upload a PDF first."
