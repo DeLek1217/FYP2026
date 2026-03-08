@@ -73,28 +73,42 @@ def extract_rule():
 def run_audit():
     data = request.get_json()
     rule = data.get("rule_text", "")
+    mode = data.get("mode", "audit")  # 默认是 audit，但前端可以传 advisory过来
     
     if not rule:
         return jsonify({"error": "No rule text provided"}), 400
 
     try:
-        # Generate SQL using Gemini
-        sql_code = auditor_agent.generate_audit_query(rule)
+        # 调用全新的 Agentic Workflow
+        agent_result = auditor_agent.run_agentic_workflow(rule, mode=mode)
         
-        if sql_code.startswith("Error"):
-            return jsonify({"error": sql_code}), 500
+        if "error" in agent_result:
+            return jsonify({"error": agent_result["error"]}), 500
 
-        # Execute SQL against your synthetic database
+        # 情境 1：如果 User 只按了 "Advisory" (解释条规)
+        if mode == "advisory":
+            return jsonify({
+                "status": "success",
+                "mode": "advisory",
+                "strategy": agent_result["strategy"],
+                "thoughts": agent_result["thoughts"]
+            })
+
+        # 情境 2：如果 User 按了 "Execute Audit" (跑数据)
+        sql_code = agent_result["sql_code"]
+        
+        # 真正跑 Database
         conn = sqlite3.connect("banking_data.sqlite")
         results_df = pd.read_sql_query(sql_code, conn)
         conn.close()
         
-        # Convert Pandas dataframe to JSON
         records = results_df.to_dict(orient="records")
 
         return jsonify({
             "status": "success",
-            "regulatory_rule": rule,
+            "mode": "audit",
+            "strategy": agent_result["strategy"],
+            "thoughts": agent_result["thoughts"], # 把思考日志传给前端！
             "generated_sql": sql_code,
             "total_violations_detected": len(records),
             "violation_data": records 
