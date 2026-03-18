@@ -1,3 +1,84 @@
+Skip to content
+DeLek1217
+FYP2026
+Repository navigation
+Code
+Issues
+Pull requests
+Actions
+Projects
+Wiki
+Security
+Insights
+Settings
+Files
+Go to file
+t
+.env
+App.jsx
+BNM_AML_Directive_2026.pdf
+README.md
+auditor_agent.py
+banking_data.sqlite
+flask_app.py
+generate_data.py
+reader_agent.py
+train_model.py
+FYP2026
+/
+generate_data.py
+in
+testingchy
+
+Edit
+
+Preview
+Indent mode
+
+Spaces
+Indent size
+
+4
+Line wrap mode
+
+No wrap
+Editing generate_data.py file contents
+  1
+  2
+  3
+  4
+  5
+  6
+  7
+  8
+  9
+ 10
+ 11
+ 12
+ 13
+ 14
+ 15
+ 16
+ 17
+ 18
+ 19
+ 20
+ 21
+ 22
+ 23
+ 24
+ 25
+ 26
+ 27
+ 28
+ 29
+ 30
+ 31
+ 32
+ 33
+ 34
+ 35
+ 36
 import sqlite3
 import pandas as pd
 import random
@@ -34,63 +115,5 @@ def generate_enterprise_db(num_cust=800, num_acc=1200, num_txn=5000):
     for _ in range(num_acc):
         cust = random.choice(customers)
         status = random.choices(['Active', 'Dormant', 'Frozen'], weights=[0.8, 0.15, 0.05])[0]
-        
-        accounts.append({
-            "account_id": fake.unique.random_int(min=10000000, max=99999999),
-            "customer_id": cust['customer_id'],
-            "account_type": random.choice(acc_types),
-            "date_opened": fake.date_between(start_date='-10y', end_date='-1m').strftime("%Y-%m-%d"),
-            "current_balance_myr": round(random.uniform(0, 1000000), 2),
-            "account_status": status
-        })
-    df_accounts = pd.DataFrame(accounts)
-
-    # --- 3. TRANSACTIONS TABLE ---
-    transactions = []
-    txn_types = ['WIRE_TRANSFER', 'CASH_DEPOSIT', 'P2P_TRANSFER', 'SWIFT_CROSS_BORDER']
-    
-    for _ in range(num_txn):
-        acc = random.choice(accounts)
-        # Find matching customer to build realistic risk scenarios
-        cust = next(c for c in customers if c['customer_id'] == acc['customer_id'])
-        
-        amount = round(random.uniform(50.0, 250000.0), 2)
-        is_cross_border = 1 if random.random() < 0.2 else 0
-        dest_country = random.choice(nationalities) if is_cross_border else 'MY'
-        
-        # --- Advanced ML Anomaly Injection ---
-        risk_score = 10
-        # Scenario A: High-risk jurisdiction
-        if dest_country in ['KP', 'IR', 'RU']: risk_score += 40
-        # Scenario B: Dormant account suddenly active with high amount
-        if acc['account_status'] == 'Dormant' and amount > 20000: risk_score += 45
-        # Scenario C: Student/Unemployed dealing with massive cross-border funds
-        if cust['industry'] in ['Student', 'Unemployed'] and amount > 50000: risk_score += 50
-        # Scenario D: PEP making large transfers
-        if cust['is_pep'] == 1 and amount > 100000: risk_score += 35
-        
-        transactions.append({
-            "transaction_id": fake.uuid4(),
-            "account_id": acc['account_id'],
-            "timestamp": fake.date_time_between(start_date='-90d', end_date='now').strftime("%Y-%m-%d %H:%M:%S"),
-            "transaction_type": random.choice(txn_types) if not is_cross_border else 'SWIFT_CROSS_BORDER',
-            "amount_myr": amount,
-            "beneficiary_country": dest_country,
-            "is_cross_border": is_cross_border,
-            "calculated_risk_score": min(risk_score, 100)
-        })
-    df_transactions = pd.DataFrame(transactions)
-
-    # --- Save to SQLite ---
-    conn = sqlite3.connect("banking_data.sqlite")
-    df_customers.to_sql("customers", conn, if_exists="replace", index=False)
-    df_accounts.to_sql("accounts", conn, if_exists="replace", index=False)
-    df_transactions.to_sql("transactions", conn, if_exists="replace", index=False)
-    conn.close()
-    
-    print("\n✅ Database Successfully Architected: 'banking_data.sqlite'")
-    print(f"📊 Customers: {len(df_customers)} | Accounts: {len(df_accounts)} | Transactions: {len(df_transactions)}")
-    print("🔥 The environment is now ready for Agentic JOIN queries.")
-
-if __name__ == "__main__":
-    generate_enterprise_db()
+Use Control + Shift + m to toggle the tab key moving focus. Alternatively, use esc then tab to move to the next interactive element on the page.
+ 
