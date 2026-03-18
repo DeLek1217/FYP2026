@@ -2,19 +2,21 @@ import { useState, useRef, useEffect } from 'react'
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer } from 'recharts'
 
 function App() {
+  // --- STATES ---
   const [file, setFile] = useState(null)
   const [uploadStatus, setUploadStatus] = useState("")
-  const [query, setQuery] = useState("") 
+  const [isUploading, setIsUploading] = useState(false)
+  
+  // Dynamic Discovery States
+  const [discoveredRules, setDiscoveredRules] = useState([])
+  const [isDiscovering, setIsDiscovering] = useState(false)
   const [extractedRule, setExtractedRule] = useState("")
   
-  // Agentic States
+  // Agentic Workflow States
   const [agentLogs, setAgentLogs] = useState([])
   const [auditStrategy, setAuditStrategy] = useState("")
   const [auditResults, setAuditResults] = useState([])
   const [activeMode, setActiveMode] = useState("") // 'advisory' or 'audit'
-  
-  const [isUploading, setIsUploading] = useState(false)
-  const [isExtracting, setIsExtracting] = useState(false)
   const [isWorking, setIsWorking] = useState(false)
 
   const logEndRef = useRef(null)
@@ -24,41 +26,46 @@ function App() {
     logEndRef.current?.scrollIntoView({ behavior: "smooth" })
   }, [agentLogs])
 
-  const suggestedQueries = [
-    { label: "High-Value Thresholds", text: "What is the exact rule and threshold amount for high-value transactions?" },
-    { label: "Sanctioned Countries", text: "What are the rules regarding transactions to sanctioned beneficiary countries like KP or IR?" },
-    { label: "Source of Funds", text: "What is the specific requirement for transactions where the source of funds is unknown?" }
-  ];
-
+  // --- HANDLERS ---
   const handleFileChange = (e) => setFile(e.target.files[0])
 
   const handleUpload = async () => {
     if (!file) return;
-    setIsUploading(true); setUploadStatus("")
+    setIsUploading(true); 
+    setUploadStatus("");
+    setDiscoveredRules([]); // Clear old rules on new upload
+    setExtractedRule("");
+    
     const formData = new FormData()
     formData.append("file", file)
     try {
       const response = await fetch("http://127.0.0.1:5000/upload", { method: "POST", body: formData })
       const data = await response.json()
       if (response.ok) setUploadStatus(`✅ PDF Indexed Successfully`)
+      else setUploadStatus(`❌ Error: ${data.error}`)
     } catch (err) {
-      setUploadStatus("❌ Failed to connect.")
+      setUploadStatus("❌ Failed to connect to server.")
     }
     setIsUploading(false)
   }
 
-  const executeQuickExtract = async (queryText) => {
-    setIsExtracting(true); setQuery(queryText); setExtractedRule("Agent is reading document...")
+  // NEW: Dynamic Rule Scanner
+  const scanDocumentForRules = async () => {
+    setIsDiscovering(true)
+    setDiscoveredRules([])
+    setExtractedRule("")
     try {
-      const response = await fetch("http://127.0.0.1:5000/extract", {
-        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ query: queryText })
-      })
+      const response = await fetch("http://127.0.0.1:5000/discover_rules")
       const data = await response.json()
-      if (response.ok) setExtractedRule(data.extracted_rule)
+      if (response.ok) {
+        setDiscoveredRules(data.rules || [])
+      } else {
+        setAgentLogs(prev => [...prev, { type: "error", text: `Scan failed: ${data.error}` }])
+      }
     } catch (err) {
-      setExtractedRule("Error extracting rule.")
+      setAgentLogs(prev => [...prev, { type: "error", text: "❌ Failed to connect for rule scan." }])
     }
-    setIsExtracting(false)
+    setIsDiscovering(false)
   }
 
   // THE AGENTIC WORKFLOW TRIGGER
@@ -79,11 +86,11 @@ function App() {
       const data = await response.json()
       
       if (response.ok) {
-        // Render thoughts one by one for cool matrix effect (simulated delay)
+        // Render thoughts one by one for cool matrix effect
         data.thoughts.forEach((thought, index) => {
           setTimeout(() => {
             setAgentLogs(prev => [...prev, thought])
-          }, index * 600) // 600ms delay per log
+          }, index * 600) 
         })
 
         // Wait for logs to finish before showing final results
@@ -126,7 +133,7 @@ function App() {
     auditResults.forEach(r => {
       counts[r.beneficiary_country] = (counts[r.beneficiary_country] || 0) + 1;
     })
-    return Object.keys(counts).map(key => ({ country: key, count: counts[key] })).sort((a,b)=> b.count - a.count).slice(0, 5); // Top 5
+    return Object.keys(counts).map(key => ({ country: key, count: counts[key] })).sort((a,b)=> b.count - a.count).slice(0, 5);
   }
 
   // --- STYLES ---
@@ -150,20 +157,30 @@ function App() {
             <button onClick={handleUpload} disabled={isUploading} style={{ backgroundColor: '#2ecc71', color: '#fff', border: 'none', padding: '8px 12px', borderRadius: '4px', cursor: 'pointer', width: '100%' }}>
               {isUploading ? "Uploading..." : "Index Document"}
             </button>
-            {uploadStatus && <div style={{ color: '#27ae60', fontSize: '0.85rem', marginTop: '10px', fontWeight: 'bold' }}>{uploadStatus}</div>}
+            {uploadStatus && <div style={{ color: uploadStatus.includes('❌') ? '#e74c3c' : '#27ae60', fontSize: '0.85rem', marginTop: '10px', fontWeight: 'bold' }}>{uploadStatus}</div>}
           </div>
 
           <div style={cardStyle}>
-            <h3 style={{ color: '#8e44ad', marginTop: 0 }}>2. Rule Discovery</h3>
+            <h3 style={{ color: '#8e44ad', marginTop: 0 }}>2. Dynamic Rule Discovery</h3>
+            
+            {/* Dynamic Scan Button */}
+            <button onClick={scanDocumentForRules} disabled={!uploadStatus || isDiscovering}
+              style={{ width: '100%', backgroundColor: '#8e44ad', color: 'white', border: 'none', padding: '10px', borderRadius: '4px', cursor: (!uploadStatus || isDiscovering) ? 'not-allowed' : 'pointer', fontWeight: 'bold', marginBottom: '15px' }}>
+              {isDiscovering ? "🤖 AI is Scanning Document..." : "📄 Auto-Scan Document for Rules"}
+            </button>
+
+            {/* Dynamically Generated Buttons */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '15px' }}>
-              {suggestedQueries.map((q, idx) => (
-                <button key={idx} onClick={() => executeQuickExtract(q.text)} disabled={!uploadStatus || isExtracting}
-                  style={{ backgroundColor: '#ecf0f1', color: '#2c3e50', border: '1px solid #bdc3c7', padding: '8px', borderRadius: '4px', cursor: (!uploadStatus || isExtracting) ? 'not-allowed' : 'pointer', textAlign: 'left', fontSize: '0.85rem', transition: '0.2s' }}>
-                  🔍 {q.label}
+              {discoveredRules.map((rule, idx) => (
+                <button key={idx} onClick={() => setExtractedRule(rule.text)} 
+                  style={{ backgroundColor: '#ecf0f1', color: '#2c3e50', border: '1px solid #bdc3c7', padding: '10px', borderRadius: '4px', cursor: 'pointer', textAlign: 'left', fontSize: '0.85rem', transition: '0.2s' }}>
+                  <strong style={{display: 'block', color: '#2980b9', marginBottom: '4px'}}>{rule.label}</strong>
+                  <span style={{color: '#7f8c8d'}}>{rule.text}</span>
                 </button>
               ))}
             </div>
-            <textarea value={extractedRule} onChange={(e) => setExtractedRule(e.target.value)} placeholder="Extracted rule will appear here..."
+
+            <textarea value={extractedRule} onChange={(e) => setExtractedRule(e.target.value)} placeholder="Click a discovered rule above, or type manually..."
               style={{ width: '100%', height: '80px', padding: '10px', borderRadius: '4px', border: '1px solid #ccc', boxSizing: 'border-box', backgroundColor: '#fafafa', color: '#000' }} />
           </div>
 
@@ -260,27 +277,86 @@ function App() {
                 </div>
                 <div style={{ overflowY: 'auto', maxHeight: '300px' }}>
                   <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.9rem' }}>
-                    <thead style={{ position: 'sticky', top: 0, backgroundColor: '#ecf0f1' }}>
+                    <thead style={{ position: 'sticky', top: 0, backgroundColor: '#ecf0f1', zIndex: 1 }}>
                       <tr>
-                        <th style={{ padding: '10px', textAlign: 'left' }}>Date</th>
-                        <th style={{ padding: '10px', textAlign: 'left' }}>Customer</th>
-                        <th style={{ padding: '10px', textAlign: 'left' }}>Type</th>
-                        <th style={{ padding: '10px', textAlign: 'left' }}>Amount (MYR)</th>
-                        <th style={{ padding: '10px', textAlign: 'left' }}>Country</th>
-                        <th style={{ padding: '10px', textAlign: 'left' }}>Risk</th>
+                        <th style={{ padding: '12px', textAlign: 'left', borderBottom: '2px solid #bdc3c7' }}>Date & Type</th>
+                        <th style={{ padding: '12px', textAlign: 'left', borderBottom: '2px solid #bdc3c7' }}>Customer Profile</th>
+                        <th style={{ padding: '12px', textAlign: 'left', borderBottom: '2px solid #bdc3c7' }}>Account Status</th>
+                        <th style={{ padding: '12px', textAlign: 'left', borderBottom: '2px solid #bdc3c7' }}>Amount (MYR)</th>
+                        <th style={{ padding: '12px', textAlign: 'left', borderBottom: '2px solid #bdc3c7' }}>Routing</th>
+                        <th style={{ padding: '12px', textAlign: 'left', borderBottom: '2px solid #bdc3c7' }}>Risk Score</th>
+                        <th style={{ padding: '12px', textAlign: 'left', borderBottom: '2px solid #bdc3c7' }}>AI Prediction</th>
                       </tr>
                     </thead>
                     <tbody>
                       {auditResults.map((row, i) => (
-                        <tr key={i} style={{ borderBottom: '1px solid #eee' }}>
-                          <td style={{ padding: '10px' }}>{row.transaction_date}</td>
-                          <td style={{ padding: '10px' }}>{row.customer_name}</td>
-                          <td style={{ padding: '10px' }}>{row.transaction_type}</td>
-                          <td style={{ padding: '10px', fontWeight: 'bold' }}>{row.amount}</td>
-                          <td style={{ padding: '10px' }}>{row.beneficiary_country}</td>
-                          <td style={{ padding: '10px', color: row.risk_score > 80 ? '#c0392b' : '#333', fontWeight: row.risk_score > 80 ? 'bold' : 'normal' }}>
-                            {row.risk_score}
+                        <tr key={i} style={{ borderBottom: '1px solid #eee', backgroundColor: row.calculated_risk_score > 80 ? '#fff8f8' : 'white' }}>
+                          
+                          {/* 1. Date & Type */}
+                          <td style={{ padding: '12px' }}>
+                            <div style={{ fontWeight: 'bold', color: '#2c3e50' }}>{row.transaction_date}</div>
+                            <div style={{ fontSize: '0.8rem', color: '#7f8c8d', marginTop: '4px' }}>{row.transaction_type}</div>
                           </td>
+                          
+                          {/* 2. Customer Profile (With Industry & PEP Badge) */}
+                          <td style={{ padding: '12px' }}>
+                            <div style={{ fontWeight: 'bold' }}>
+                              {row.customer_name} 
+                              {row.is_pep === 1 && (
+                                <span style={{ marginLeft: '8px', backgroundColor: '#e74c3c', color: 'white', padding: '2px 6px', borderRadius: '4px', fontSize: '0.7rem' }}>PEP</span>
+                              )}
+                            </div>
+                            <div style={{ fontSize: '0.8rem', color: '#34495e', marginTop: '4px' }}>Industry: {row.industry}</div>
+                          </td>
+
+                          {/* 3. Account Status (With Dormant Warning) */}
+                          <td style={{ padding: '12px' }}>
+                            {row.account_status === 'Dormant' ? (
+                                <span style={{ backgroundColor: '#f39c12', color: 'white', padding: '4px 8px', borderRadius: '4px', fontSize: '0.8rem', fontWeight: 'bold' }}>Dormant</span>
+                              ) : (
+                                <span style={{ color: '#27ae60', fontWeight: 'bold' }}>{row.account_status}</span>
+                            )}
+                          </td>
+
+                          {/* 4. Amount */}
+                          <td style={{ padding: '12px', fontWeight: 'bold', fontSize: '1.05rem', color: '#2c3e50' }}>
+                            {row.amount?.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </td>
+
+                          {/* 5. Routing (With Cross-Border Badge) */}
+                          <td style={{ padding: '12px' }}>
+                            <div style={{ fontWeight: 'bold' }}>{row.beneficiary_country}</div>
+                            {row.is_cross_border === 1 && (
+                               <div style={{ fontSize: '0.75rem', color: '#8e44ad', marginTop: '4px', fontWeight: 'bold' }}>🌍 Cross-Border</div>
+                            )}
+                          </td>
+
+                          {/* 6. Risk Score */}
+                          <td style={{ padding: '12px' }}>
+                            <span style={{ 
+                              backgroundColor: row.risk_score > 80 ? '#c0392b' : row.risk_score > 50 ? '#f39c12' : '#2ecc71', 
+                              color: 'white', padding: '6px 10px', borderRadius: '20px', fontWeight: 'bold' 
+                            }}>
+                              {row.risk_score}
+                            </span>
+                          </td>
+
+                          {/* 7. NEW: ML Prediction Score */}
+                          <td style={{ padding: '12px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                              <div style={{ width: '50px', backgroundColor: '#ecf0f1', borderRadius: '4px', height: '8px', overflow: 'hidden' }}>
+                                <div style={{ 
+                                  width: `${row.ml_probability || 0}%`, 
+                                  backgroundColor: (row.ml_probability || 0) > 80 ? '#c0392b' : (row.ml_probability || 0) > 50 ? '#f39c12' : '#2ecc71', 
+                                  height: '100%' 
+                                }}></div>
+                              </div>
+                              <span style={{ fontWeight: 'bold', fontSize: '0.85rem', color: '#2c3e50' }}>
+                                {row.ml_probability}%
+                              </span>
+                            </div>
+                          </td>
+
                         </tr>
                       ))}
                     </tbody>
