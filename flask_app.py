@@ -9,6 +9,94 @@ from auditor_agent import AuditorAgent
 app = Flask(__name__)
 CORS(app)
 
+# --- NEW: Database Auto-Upgrader for HITL ---
+def upgrade_db_for_hitl():
+    print("Checking database schema for HITL columns...")
+    conn = sqlite3.connect("banking_data.sqlite")
+    cursor = conn.cursor()
+    try:
+        # Add new columns if they don't exist yet
+        cursor.execute("ALTER TABLE transactions ADD COLUMN review_status TEXT DEFAULT 'Pending'")
+        cursor.execute("ALTER TABLE transactions ADD COLUMN reviewer_notes TEXT")
+        print("✅ HITL columns added to database.")
+    except Exception as e:
+        # If it throws an error, the columns already exist, which is fine!
+        pass 
+    conn.commit()
+    conn.close()
+
+upgrade_db_for_hitl()
+
+# --- NEW: Authentication Endpoint ---
+@app.route('/login', methods=['POST'])
+def login():
+    data = request.json
+    username = data.get('username')
+    password = data.get('password')
+    
+    # Hardcoded credentials for FYP demonstration
+    if username == 'analyst' and password == '123':
+        return jsonify({"role": "analyst", "name": "L1 Compliance Analyst"})
+    elif username == 'manager' and password == '123':
+        return jsonify({"role": "manager", "name": "L2 Review Manager"})
+    
+    return jsonify({"error": "Invalid credentials"}), 401
+
+# --- NEW: HITL Decision Endpoint ---
+@app.route('/review_transaction', methods=['POST'])
+def review_transaction():
+    data = request.json
+    txn_id = data.get('transaction_id')
+    status = data.get('status') # 'Approved' or 'Rejected'
+    
+    if not txn_id or not status:
+        return jsonify({"error": "Missing data"}), 400
+
+    try:
+        conn = sqlite3.connect("banking_data.sqlite")
+        cursor = conn.cursor()
+        cursor.execute(
+            "UPDATE transactions SET review_status = ? WHERE transaction_id = ?", 
+            (status, txn_id)
+        )
+        conn.commit()
+        conn.close()
+        return jsonify({"message": f"Transaction {txn_id} marked as {status}"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+# --- NEW: Bulk Action Endpoint for Analyst Triage ---
+@app.route('/bulk_review', methods=['POST'])
+def bulk_review():
+    data = request.json
+    txn_ids = data.get('transaction_ids', [])
+    status = data.get('status') # 'Escalated' or 'Rejected'
+    username = data.get('username')
+
+    if not txn_ids or not status:
+        return jsonify({"error": "Missing data"}), 400
+
+    try:
+        conn = sqlite3.connect("banking_data.sqlite")
+        cursor = conn.cursor()
+        
+        # Create a dynamic query based on how many checkboxes were selected
+        placeholders = ','.join(['?'] * len(txn_ids))
+        audit_note = f"Action by {username}"
+        
+        # Update all selected rows in one single database query
+        cursor.execute(
+            f"UPDATE transactions SET review_status = ?, reviewer_notes = ? WHERE transaction_id IN ({placeholders})", 
+            [status, audit_note] + txn_ids
+        )
+        conn.commit()
+        conn.close()
+        return jsonify({"message": f"{len(txn_ids)} transactions updated to {status}"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+        
+
 # 1. 初始化 Agents
 reader_agent = ReaderAgent()
 auditor_agent = AuditorAgent()
