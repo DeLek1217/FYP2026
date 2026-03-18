@@ -29,8 +29,8 @@ class AuditorAgent:
         
         CRITICAL SQL INSTRUCTIONS:
         - To get Customer details for a Transaction, you MUST JOIN transactions -> accounts -> customers.
-        - Example JOIN path: transactions t JOIN accounts a ON t.account_id = a.account_id JOIN customers c ON a.customer_id = c.customer_id
-        - ALWAYS SELECT c.full_name AS customer_name, c.industry, c.is_pep, c.annual_income_myr, a.account_status, t.timestamp AS transaction_date, t.amount_myr AS amount, t.calculated_risk_score AS risk_score, t.beneficiary_country, t.transaction_type, t.is_cross_border
+        - You MUST ALWAYS start your query exactly like this:
+          SELECT t.transaction_id, c.full_name AS customer_name, c.industry, c.is_pep, a.account_status, t.timestamp AS transaction_date, t.amount_myr AS amount, t.calculated_risk_score, t.beneficiary_country, t.transaction_type, t.is_cross_border
         """
 
     def run_agentic_workflow(self, rule, mode="audit", retries=2):
