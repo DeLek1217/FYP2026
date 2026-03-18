@@ -16,8 +16,21 @@ class AuditorAgent:
             api_key=os.getenv("GROQ_API_KEY") 
         )
         self.schema_info = """
-        Table Name: transaction_ledger
-        Columns: transaction_id, transaction_date, customer_name, customer_id, transaction_type, amount, currency, beneficiary_country, source_of_funds, risk_score
+        Database contains 3 relational tables:
+        
+        Table 1: customers
+        - Columns: customer_id (PK), full_name, dob, nationality, industry, annual_income_myr, is_pep (1/0), kyc_risk_rating
+        
+        Table 2: accounts
+        - Columns: account_id (PK), customer_id (FK), account_type, date_opened, current_balance_myr, account_status
+        
+        Table 3: transactions
+        - Columns: transaction_id (PK), account_id (FK), timestamp, transaction_type, amount_myr, beneficiary_country, is_cross_border (1/0), calculated_risk_score
+        
+        CRITICAL SQL INSTRUCTIONS:
+        - To get Customer details for a Transaction, you MUST JOIN transactions -> accounts -> customers.
+        - Example JOIN path: transactions t JOIN accounts a ON t.account_id = a.account_id JOIN customers c ON a.customer_id = c.customer_id
+        - ALWAYS SELECT c.full_name AS customer_name, c.industry, c.is_pep, c.annual_income_myr, a.account_status, t.timestamp AS transaction_date, t.amount_myr AS amount, t.calculated_risk_score AS risk_score, t.beneficiary_country, t.transaction_type, t.is_cross_border
         """
 
     def run_agentic_workflow(self, rule, mode="audit", retries=2):
