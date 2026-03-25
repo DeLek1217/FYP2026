@@ -2,370 +2,567 @@ import { useState, useRef, useEffect } from 'react'
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer } from 'recharts'
 
 function App() {
-  // --- STATES ---
+  // --- AUTHENTICATION STATE ---
+  const [user, setUser] = useState(null)
+  const [loginForm, setLoginForm] = useState({ username: '', password: '' })
+  const [loginError, setLoginError] = useState('')
+
+  // --- THEME & RESPONSIVE STATE ---
+  const [themeMode, setThemeMode] = useState('system')
+  const [isSystemDark, setIsSystemDark] = useState(false)
+
+  useEffect(() => {
+    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)')
+    setIsSystemDark(mediaQuery.matches)
+    const handler = (e) => setIsSystemDark(e.matches)
+    mediaQuery.addEventListener('change', handler)
+    return () => mediaQuery.removeEventListener('change', handler)
+  }, [])
+
+  const activeTheme = themeMode === 'system' ? (isSystemDark ? 'dark' : 'light') : themeMode
+
+  const colors = {
+    light: {
+      bg: '#ecf0f1', text: '#2c3e50', subText: '#7f8c8d', cardBg: '#ffffff',
+      cardBorder: '#dddddd', inputBg: '#fafafa', inputBorder: '#cccccc',
+      tableHeader: '#f8f9fa', tableRowHover: '#f4f9fd', tableBorder: '#eeeeee',
+      danger: '#c0392b', success: '#27ae60', warning: '#f39c12', primary: '#2980b9', secondary: '#8e44ad', badgeBg: '#f3e5f5'
+    },
+    dark: {
+      bg: '#121212', text: '#ecf0f1', subText: '#bdc3c7', cardBg: '#1e1e1e',
+      cardBorder: '#333333', inputBg: '#2a2a2a', inputBorder: '#444444',
+      tableHeader: '#252525', tableRowHover: '#2a3b4c', tableBorder: '#333333',
+      danger: '#e74c3c', success: '#2ecc71', warning: '#f1c40f', primary: '#3498db', secondary: '#9b59b6', badgeBg: '#3a1f42'
+    }
+  }
+  const theme = colors[activeTheme]
+
+  // --- GENERAL STATES ---
   const [file, setFile] = useState(null)
   const [uploadStatus, setUploadStatus] = useState("")
   const [isUploading, setIsUploading] = useState(false)
   
-  // Dynamic Discovery States
+  // --- MULTI-RULE DISCOVERY STATES ---
   const [discoveredRules, setDiscoveredRules] = useState([])
   const [isDiscovering, setIsDiscovering] = useState(false)
-  const [extractedRule, setExtractedRule] = useState("")
+  const [selectedRuleIndices, setSelectedRuleIndices] = useState([])
+  const [combinedRuleText, setCombinedRuleText] = useState("")
   
-  // Agentic Workflow States
+  // --- AGENTIC WORKFLOW STATES ---
   const [agentLogs, setAgentLogs] = useState([])
   const [auditStrategy, setAuditStrategy] = useState("")
   const [auditResults, setAuditResults] = useState([])
-  const [activeMode, setActiveMode] = useState("") // 'advisory' or 'audit'
   const [isWorking, setIsWorking] = useState(false)
+  
+  // --- HITL & MANAGER REPORT STATES ---
+  const [selectedRows, setSelectedRows] = useState([])
+  const [activeTab, setActiveTab] = useState('audit')
+  const [generatedReport, setGeneratedReport] = useState("")
+  const [isGeneratingReport, setIsGeneratingReport] = useState(false)
 
   const logEndRef = useRef(null)
+  useEffect(() => { logEndRef.current?.scrollIntoView({ behavior: "smooth" }) }, [agentLogs])
 
-  // Auto-scroll the Agent Terminal
-  useEffect(() => {
-    logEndRef.current?.scrollIntoView({ behavior: "smooth" })
-  }, [agentLogs])
+  // --- LOGIN HANDLER ---
+  const handleLogin = async (e) => {
+    e.preventDefault()
+    setLoginError('')
+    try {
+      const res = await fetch("http://127.0.0.1:5000/login", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(loginForm)
+      })
+      const data = await res.json()
+      if (res.ok) { setUser(data); setActiveTab('audit'); } 
+      else { setLoginError(data.error) }
+    } catch (err) { setLoginError("Failed to connect to server.") }
+  }
 
-  // --- HANDLERS ---
+  // --- RULE DISCOVERY MULTI-SELECT LOGIC ---
+  const handleToggleRule = (idx) => {
+    const updatedSelection = selectedRuleIndices.includes(idx)
+      ? selectedRuleIndices.filter(i => i !== idx)
+      : [...selectedRuleIndices, idx]
+    setSelectedRuleIndices(updatedSelection)
+    updateCombinedText(updatedSelection)
+  }
+
+  const handleSelectAllRules = () => {
+    if (selectedRuleIndices.length === discoveredRules.length) {
+      setSelectedRuleIndices([])
+      setCombinedRuleText("")
+    } else {
+      const allIndices = discoveredRules.map((_, i) => i)
+      setSelectedRuleIndices(allIndices)
+      updateCombinedText(allIndices)
+    }
+  }
+
+  const updateCombinedText = (indices) => {
+    if (indices.length === 0) {
+      setCombinedRuleText("")
+      return
+    }
+    const combined = indices.map(i => `- ${discoveredRules[i].text}`).join("\n")
+    setCombinedRuleText(`Please audit the database for the following rules:\n${combined}`)
+  }
+
+  // --- HITL REVIEW HANDLERS ---
+  const handleReview = async (transactionId, newStatus) => {
+    try {
+      const res = await fetch("http://127.0.0.1:5000/review_transaction", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ transaction_id: transactionId, status: newStatus })
+      })
+      if (res.ok) setAuditResults(prev => prev.map(row => row.transaction_id === transactionId ? { ...row, review_status: newStatus } : row))
+    } catch (err) { alert("Failed to save decision.") }
+  }
+
+  const handleBulkAction = async (newStatus) => {
+    if (selectedRows.length === 0) return;
+    try {
+      const res = await fetch("http://127.0.0.1:5000/bulk_review", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ transaction_ids: selectedRows, status: newStatus, username: user.name })
+      })
+      if (res.ok) {
+        setAuditResults(prev => prev.map(row => selectedRows.includes(row.transaction_id) ? { ...row, review_status: newStatus } : row))
+        setSelectedRows([]) 
+      }
+    } catch (err) { alert("Failed to process bulk action.") }
+  }
+
+  const handleSelectRow = (id) => {
+    if (!id) return;
+    setSelectedRows(prev => prev.includes(id) ? prev.filter(r => r !== id) : [...prev, id])
+  }
+  
+  const handleSelectAllRows = (e) => {
+    if (e.target.checked) {
+      const pendingIds = auditResults.filter(r => r.review_status === 'Pending' && r.transaction_id).map(r => r.transaction_id)
+      setSelectedRows(pendingIds)
+    } else { setSelectedRows([]) }
+  }
+
+  // --- PIPELINE HANDLERS ---
   const handleFileChange = (e) => setFile(e.target.files[0])
 
   const handleUpload = async () => {
     if (!file) return;
-    setIsUploading(true); 
-    setUploadStatus("");
-    setDiscoveredRules([]); // Clear old rules on new upload
-    setExtractedRule("");
-    
-    const formData = new FormData()
-    formData.append("file", file)
+    setIsUploading(true); setUploadStatus(""); setDiscoveredRules([]); 
+    setSelectedRuleIndices([]); setCombinedRuleText("");
+    const formData = new FormData(); formData.append("file", file);
     try {
       const response = await fetch("http://127.0.0.1:5000/upload", { method: "POST", body: formData })
       const data = await response.json()
       if (response.ok) setUploadStatus(`✅ PDF Indexed Successfully`)
       else setUploadStatus(`❌ Error: ${data.error}`)
-    } catch (err) {
-      setUploadStatus("❌ Failed to connect to server.")
-    }
+    } catch (err) { setUploadStatus("❌ Failed to connect to server.") }
     setIsUploading(false)
   }
 
-  // NEW: Dynamic Rule Scanner
   const scanDocumentForRules = async () => {
-    setIsDiscovering(true)
-    setDiscoveredRules([])
-    setExtractedRule("")
+    setIsDiscovering(true); setDiscoveredRules([]); setSelectedRuleIndices([]); setCombinedRuleText("");
     try {
       const response = await fetch("http://127.0.0.1:5000/discover_rules")
       const data = await response.json()
-      if (response.ok) {
-        setDiscoveredRules(data.rules || [])
-      } else {
-        setAgentLogs(prev => [...prev, { type: "error", text: `Scan failed: ${data.error}` }])
-      }
-    } catch (err) {
-      setAgentLogs(prev => [...prev, { type: "error", text: "❌ Failed to connect for rule scan." }])
-    }
+      if (response.ok) setDiscoveredRules(data.rules || [])
+      else setAgentLogs(prev => [...prev, { type: "error", text: `Scan failed: ${data.error}` }])
+    } catch (err) { setAgentLogs(prev => [...prev, { type: "error", text: "❌ Failed to connect for rule scan." }]) }
     setIsDiscovering(false)
   }
 
-  // THE AGENTIC WORKFLOW TRIGGER
-  const triggerAgent = async (mode) => {
-    if (!extractedRule) return;
-    setIsWorking(true)
-    setActiveMode(mode)
-    setAgentLogs([{ type: "system", text: `Initializing Agent in ${mode.toUpperCase()} mode...` }])
-    setAuditStrategy("")
-    setAuditResults([])
+  const triggerAgent = async () => {
+    if (!combinedRuleText) return;
+    setIsWorking(true); setSelectedRows([]); setActiveTab('audit');
+    setAgentLogs([{ type: "system", text: `Initializing Autonomous AI Auditor...` }])
+    setAuditStrategy(""); setAuditResults([]); setGeneratedReport("");
     
     try {
       const response = await fetch("http://127.0.0.1:5000/audit", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ rule_text: extractedRule, mode: mode }) 
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ rule_text: combinedRuleText }) 
       })
       const data = await response.json()
-      
       if (response.ok) {
-        // Render thoughts one by one for cool matrix effect
-        data.thoughts.forEach((thought, index) => {
-          setTimeout(() => {
-            setAgentLogs(prev => [...prev, thought])
-          }, index * 600) 
-        })
-
-        // Wait for logs to finish before showing final results
+        data.thoughts.forEach((thought, index) => { setTimeout(() => setAgentLogs(prev => [...prev, thought]), index * 600) })
         setTimeout(() => {
           setAuditStrategy(data.strategy)
-          if (mode === "audit") {
-            setAuditResults(data.violation_data || [])
-          }
+          const resultsWithStatus = (data.violation_data || []).map(row => ({ ...row, review_status: row.review_status || 'Pending' }))
+          setAuditResults(resultsWithStatus)
           setIsWorking(false)
         }, data.thoughts.length * 600)
-
       } else {
-        setAgentLogs(prev => [...prev, { type: "error", text: data.error }])
-        setIsWorking(false)
+        setAgentLogs(prev => [...prev, { type: "error", text: data.error }]); setIsWorking(false)
       }
-    } catch (err) {
-      setAgentLogs(prev => [...prev, { type: "error", text: "Connection to Agent failed." }])
-      setIsWorking(false)
-    }
+    } catch (err) { setAgentLogs(prev => [...prev, { type: "error", text: "Connection to Agent failed." }]); setIsWorking(false) }
+  }
+
+  // --- REPORT GENERATION ---
+  const handleGenerateReport = async () => {
+    setIsGeneratingReport(true)
+    setGeneratedReport("AI is analyzing escalated transactions and drafting the executive summary...")
+    try {
+      const res = await fetch("http://127.0.0.1:5000/generate_report", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ transactions: auditResults })
+      })
+      const data = await res.json()
+      if (res.ok) setGeneratedReport(data.report)
+      else setGeneratedReport(`Error generating report: ${data.error}`)
+    } catch (err) { setGeneratedReport("Failed to connect to AI engine for report generation.") }
+    setIsGeneratingReport(false)
+  }
+
+  const handleDownloadReport = () => {
+    const blob = new Blob([generatedReport], { type: 'text/plain;charset=utf-8;' })
+    const link = document.createElement("a"); link.href = URL.createObjectURL(blob);
+    link.download = `STR_Executive_Report_${new Date().toISOString().slice(0,10)}.txt`; link.click();
+  }
+
+  const handleDownloadCSV = () => {
+    if (!auditResults || auditResults.length === 0) return;
+    // Added Violation Reason to the CSV Export
+    const headers = [ "Transaction ID", "Date", "Customer Name", "Amount (MYR)", "Violation Reason", "Risk Score", "ML Probability (%)", "Review Status" ]
+    const csvRows = auditResults.map(r => [
+      r.transaction_id || 'N/A', r.transaction_date, `"${r.customer_name}"`, r.amount, `"${r.violation_reason || 'Unknown Rule'}"`, r.risk_score, r.ml_probability, r.review_status || 'Pending'
+    ].join(','))
+    const blob = new Blob([[headers.join(','), ...csvRows].join('\n')], { type: 'text/csv;charset=utf-8;' })
+    const link = document.createElement("a"); link.href = URL.createObjectURL(blob);
+    link.download = `Audit_Data_${new Date().toISOString().slice(0,10)}.csv`; link.click();
   }
 
   // --- CHART DATA PROCESSING ---
   const getRiskDistribution = () => {
     let low = 0, med = 0, high = 0;
-    auditResults.forEach(r => {
-      if (r.risk_score < 50) low++;
-      else if (r.risk_score <= 80) med++;
-      else high++;
-    })
-    return [
-      { name: 'Low Risk', value: low },
-      { name: 'Medium Risk', value: med },
-      { name: 'High Risk', value: high }
-    ]
+    auditResults.forEach(r => { if (r.risk_score < 50) low++; else if (r.risk_score <= 80) med++; else high++; })
+    return [ { name: 'Low Risk', value: low }, { name: 'Medium Risk', value: med }, { name: 'High Risk', value: high } ]
   }
-  const RISK_COLORS = ['#2ecc71', '#f1c40f', '#e74c3c'];
+  const RISK_COLORS = [theme.success, theme.warning, theme.danger]
 
   const getCountryDistribution = () => {
     const counts = {};
-    auditResults.forEach(r => {
-      counts[r.beneficiary_country] = (counts[r.beneficiary_country] || 0) + 1;
-    })
-    return Object.keys(counts).map(key => ({ country: key, count: counts[key] })).sort((a,b)=> b.count - a.count).slice(0, 5);
+    auditResults.forEach(r => { counts[r.beneficiary_country] = (counts[r.beneficiary_country] || 0) + 1; })
+    return Object.keys(counts).map(key => ({ country: key, count: counts[key] })).sort((a,b)=> b.count - a.count).slice(0, 5)
   }
 
-  // --- STYLES ---
-  const paneStyle = { flex: 1, display: 'flex', flexDirection: 'column', gap: '20px' }
-  const cardStyle = { backgroundColor: '#fff', padding: '20px', borderRadius: '8px', boxShadow: '0 2px 4px rgba(0,0,0,0.1)', border: '1px solid #ddd', color: '#333' }
+  const cardStyle = { backgroundColor: theme.cardBg, padding: '20px', borderRadius: '8px', boxShadow: '0 4px 12px rgba(0,0,0,0.05)', border: `1px solid ${theme.cardBorder}`, color: theme.text }
 
+  // ================= RENDER LOGIN SCREEN =================
+  if (!user) {
+    return (
+      <div style={{ backgroundColor: theme.bg, color: theme.text, height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'Segoe UI, Tahoma, sans-serif' }}>
+        <div style={{ ...cardStyle, width: '90%', maxWidth: '400px', textAlign: 'center' }}>
+          <h2 style={{ color: theme.text, marginBottom: '20px' }}>🔐 ReguBot Secure Access</h2>
+          <form onSubmit={handleLogin} style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
+            <input type="text" placeholder="Username (analyst or manager)" value={loginForm.username} onChange={e => setLoginForm({...loginForm, username: e.target.value})} style={{ padding: '12px', borderRadius: '4px', border: `1px solid ${theme.inputBorder}`, backgroundColor: theme.inputBg, color: theme.text }} required />
+            <input type="password" placeholder="Password (123)" value={loginForm.password} onChange={e => setLoginForm({...loginForm, password: e.target.value})} style={{ padding: '12px', borderRadius: '4px', border: `1px solid ${theme.inputBorder}`, backgroundColor: theme.inputBg, color: theme.text }} required />
+            <button type="submit" style={{ backgroundColor: theme.primary, color: 'white', padding: '12px', border: 'none', borderRadius: '4px', fontWeight: 'bold', cursor: 'pointer', transition: '0.2s' }}>Sign In</button>
+          </form>
+          {loginError && <p style={{ color: theme.danger, marginTop: '15px', fontWeight: 'bold' }}>{loginError}</p>}
+        </div>
+      </div>
+    )
+  }
+
+  // ================= MAIN APP RENDER =================
   return (
-    <div style={{ backgroundColor: '#ecf0f1', minHeight: '100vh', padding: '20px', fontFamily: 'Segoe UI, Tahoma, Geneva, Verdana, sans-serif' }}>
-      <h1 style={{ color: '#2c3e50', textAlign: 'center', marginBottom: '30px', fontWeight: '800' }}>
-        🤖 ReguBot: Agentic Compliance Copilot
-      </h1>
+    <div style={{ backgroundColor: theme.bg, color: theme.text, minHeight: '100vh', padding: '20px', fontFamily: 'Segoe UI, Tahoma, sans-serif', transition: 'background-color 0.3s' }}>
+      
+      {/* INJECT RESPONSIVE CSS GRID */}
+      <style>{`
+        .app-container { max-width: 1500px; margin: 0 auto; display: flex; flex-direction: column; gap: 20px; }
+        .grid-layout { display: grid; grid-template-columns: 350px 1fr; gap: 20px; align-items: start; }
+        .left-pane { display: flex; flex-direction: column; gap: 20px; }
+        .right-pane { display: flex; flex-direction: column; gap: 20px; min-width: 0; }
+        @media (max-width: 1024px) {
+          .grid-layout { grid-template-columns: 1fr; }
+        }
+        select:focus, input:focus, textarea:focus { outline: 2px solid ${theme.primary}; }
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: ${theme.cardBg}; }
+        ::-webkit-scrollbar-thumb { background: ${theme.inputBorder}; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: ${theme.subText}; }
+      `}</style>
 
-      <div style={{ display: 'flex', gap: '20px', maxWidth: '1400px', margin: '0 auto' }}>
+      <div className="app-container">
         
-        {/* ================= LEFT PANE: AGENT CONTROL CENTER ================= */}
-        <div style={{ ...paneStyle, flex: '0 0 35%' }}>
-          
-          <div style={cardStyle}>
-            <h3 style={{ color: '#2980b9', marginTop: 0 }}>1. Knowledge Base</h3>
-            <input type="file" accept="application/pdf" onChange={handleFileChange} style={{ marginBottom: '10px', fontSize: '0.9rem' }} />
-            <button onClick={handleUpload} disabled={isUploading} style={{ backgroundColor: '#2ecc71', color: '#fff', border: 'none', padding: '8px 12px', borderRadius: '4px', cursor: 'pointer', width: '100%' }}>
-              {isUploading ? "Uploading..." : "Index Document"}
-            </button>
-            {uploadStatus && <div style={{ color: uploadStatus.includes('❌') ? '#e74c3c' : '#27ae60', fontSize: '0.85rem', marginTop: '10px', fontWeight: 'bold' }}>{uploadStatus}</div>}
-          </div>
-
-          <div style={cardStyle}>
-            <h3 style={{ color: '#8e44ad', marginTop: 0 }}>2. Dynamic Rule Discovery</h3>
+        {/* HEADER & SETTINGS */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '15px' }}>
+          <h1 style={{ color: theme.text, margin: 0, fontWeight: '800', fontSize: 'clamp(1.5rem, 4vw, 2rem)' }}>🤖 ReguBot: Agentic Compliance</h1>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '15px', flexWrap: 'wrap' }}>
             
-            {/* Dynamic Scan Button */}
-            <button onClick={scanDocumentForRules} disabled={!uploadStatus || isDiscovering}
-              style={{ width: '100%', backgroundColor: '#8e44ad', color: 'white', border: 'none', padding: '10px', borderRadius: '4px', cursor: (!uploadStatus || isDiscovering) ? 'not-allowed' : 'pointer', fontWeight: 'bold', marginBottom: '15px' }}>
-              {isDiscovering ? "🤖 AI is Scanning Document..." : "📄 Auto-Scan Document for Rules"}
+            <select value={themeMode} onChange={(e) => setThemeMode(e.target.value)} style={{ padding: '8px', borderRadius: '4px', border: `1px solid ${theme.cardBorder}`, backgroundColor: theme.cardBg, color: theme.text, cursor: 'pointer', fontWeight: 'bold' }}>
+              <option value="system">🖥️ System Theme</option>
+              <option value="light">☀️ Light Mode</option>
+              <option value="dark">🌙 Dark Mode</option>
+            </select>
+
+            <span style={{ backgroundColor: theme.cardBg, padding: '8px 15px', borderRadius: '20px', border: `1px solid ${theme.cardBorder}`, fontWeight: 'bold', color: theme.text, fontSize: '0.9rem' }}>
+              👤 {user.name} ({user.role.toUpperCase()})
+            </span>
+            <button onClick={() => {setUser(null);}} style={{ backgroundColor: theme.danger, color: '#fff', border: 'none', padding: '8px 15px', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', fontSize: '0.9rem' }}>
+              Log Out
             </button>
-
-            {/* Dynamically Generated Buttons */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '15px' }}>
-              {discoveredRules.map((rule, idx) => (
-                <button key={idx} onClick={() => setExtractedRule(rule.text)} 
-                  style={{ backgroundColor: '#ecf0f1', color: '#2c3e50', border: '1px solid #bdc3c7', padding: '10px', borderRadius: '4px', cursor: 'pointer', textAlign: 'left', fontSize: '0.85rem', transition: '0.2s' }}>
-                  <strong style={{display: 'block', color: '#2980b9', marginBottom: '4px'}}>{rule.label}</strong>
-                  <span style={{color: '#7f8c8d'}}>{rule.text}</span>
-                </button>
-              ))}
-            </div>
-
-            <textarea value={extractedRule} onChange={(e) => setExtractedRule(e.target.value)} placeholder="Click a discovered rule above, or type manually..."
-              style={{ width: '100%', height: '80px', padding: '10px', borderRadius: '4px', border: '1px solid #ccc', boxSizing: 'border-box', backgroundColor: '#fafafa', color: '#000' }} />
           </div>
-
-          <div style={cardStyle}>
-            <h3 style={{ color: '#d35400', marginTop: 0 }}>3. Agent Deployment</h3>
-            <div style={{ display: 'flex', gap: '10px' }}>
-              <button onClick={() => triggerAgent('advisory')} disabled={isWorking || !extractedRule}
-                style={{ flex: 1, backgroundColor: '#f39c12', color: 'white', border: 'none', padding: '10px', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>
-                💬 Advisory Only
-              </button>
-              <button onClick={() => triggerAgent('audit')} disabled={isWorking || !extractedRule}
-                style={{ flex: 1, backgroundColor: '#c0392b', color: 'white', border: 'none', padding: '10px', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>
-                🚀 Execute Audit
-              </button>
-            </div>
-          </div>
-
-          {/* AGENT TERMINAL LOG */}
-          <div style={{ ...cardStyle, backgroundColor: '#1e1e1e', color: '#00ff00', fontFamily: 'monospace', height: '250px', overflowY: 'auto' }}>
-            <h4 style={{ color: '#fff', marginTop: 0, borderBottom: '1px solid #444', paddingBottom: '5px' }}>Terminal: Agent Execution Log</h4>
-            {agentLogs.length === 0 && <span style={{ color: '#666' }}>Awaiting instructions...</span>}
-            {agentLogs.map((log, i) => (
-              <div key={i} style={{ marginBottom: '5px', fontSize: '0.85rem' }}>
-                <span style={{ color: log.type === 'thought' ? '#f39c12' : log.type === 'action' ? '#3498db' : '#e74c3c' }}>
-                  [{log.type.toUpperCase()}]
-                </span> {log.text}
-              </div>
-            ))}
-            <div ref={logEndRef} />
-          </div>
-
         </div>
 
-        {/* ================= RIGHT PANE: ANALYTICS WORKSPACE ================= */}
-        <div style={{ ...paneStyle, flex: '0 0 63%' }}>
+        <div className="grid-layout">
           
-          {/* Welcome / Empty State */}
-          {!auditStrategy && !isWorking && (
-            <div style={{ ...cardStyle, height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', color: '#7f8c8d' }}>
-              <h2 style={{ fontSize: '2rem', marginBottom: '10px' }}>Workspace is Empty</h2>
-              <p>Deploy the agent from the Left Panel to generate reports and analytics.</p>
+          {/* ================= LEFT PANE ================= */}
+          <div className="left-pane">
+            
+            <div style={{...cardStyle, padding: '20px'}}>
+              <h3 style={{ color: theme.primary, marginTop: 0, fontSize: '1.2rem', display: 'flex', alignItems: 'center', gap: '8px' }}><span>1.</span> Knowledge Base</h3>
+              <input type="file" accept="application/pdf" onChange={handleFileChange} style={{ marginBottom: '15px', fontSize: '0.85rem', width: '100%', color: theme.text }} />
+              <button onClick={handleUpload} disabled={isUploading} style={{ backgroundColor: theme.success, color: '#fff', border: 'none', padding: '10px', borderRadius: '4px', cursor: 'pointer', width: '100%', fontWeight: 'bold', fontSize: '1rem' }}>
+                {isUploading ? "Uploading..." : "Index Document"}
+              </button>
+              {uploadStatus && <div style={{ color: uploadStatus.includes('❌') ? theme.danger : theme.success, fontSize: '0.85rem', marginTop: '10px', fontWeight: 'bold' }}>{uploadStatus}</div>}
             </div>
-          )}
 
-          {/* Advisory Report Card */}
-          {auditStrategy && (
-            <div style={{ ...cardStyle, borderLeft: '5px solid #3498db' }}>
-              <h3 style={{ color: '#2c3e50', marginTop: 0 }}>📄 Compliance Strategy Report</h3>
-              <p style={{ fontSize: '1.05rem', lineHeight: '1.6', color: '#34495e' }}>{auditStrategy}</p>
-              {activeMode === 'advisory' && (
-                <div style={{ marginTop: '15px', padding: '10px', backgroundColor: '#fef9e7', color: '#d35400', borderRadius: '4px', fontWeight: 'bold' }}>
-                  ℹ️ This is an Advisory Report. No database queries were executed. To scan real transactions, click "Execute Audit".
+            <div style={{...cardStyle, padding: '20px'}}>
+              <h3 style={{ color: theme.secondary, marginTop: 0, fontSize: '1.2rem', display: 'flex', alignItems: 'center', gap: '8px', justifyContent: 'space-between' }}>
+                <span><span>2.</span> Rule Discovery</span>
+                {discoveredRules.length > 0 && <span style={{ backgroundColor: theme.secondary, color: 'white', fontSize: '0.75rem', padding: '2px 8px', borderRadius: '12px' }}>{discoveredRules.length} Found</span>}
+              </h3>
+              
+              <button onClick={scanDocumentForRules} disabled={!uploadStatus || isDiscovering} style={{ width: '100%', backgroundColor: theme.secondary, color: 'white', border: 'none', padding: '10px', borderRadius: '4px', cursor: (!uploadStatus || isDiscovering) ? 'not-allowed' : 'pointer', fontWeight: 'bold', marginBottom: '15px', fontSize: '1rem' }}>
+                {isDiscovering ? "Scanning PDF..." : "Auto-Scan Document"}
+              </button>
+
+              {discoveredRules.length > 0 && (
+                <div style={{ marginBottom: '15px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px', paddingBottom: '8px', borderBottom: `1px solid ${theme.cardBorder}` }}>
+                    <span style={{ fontSize: '0.85rem', fontWeight: 'bold', color: theme.subText }}>Select Rules to Audit:</span>
+                    <button onClick={handleSelectAllRules} style={{ background: 'none', border: 'none', color: theme.primary, cursor: 'pointer', fontSize: '0.85rem', fontWeight: 'bold' }}>
+                      {selectedRuleIndices.length === discoveredRules.length ? "Deselect All" : "Select All"}
+                    </button>
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '200px', overflowY: 'auto', paddingRight: '5px' }}>
+                    {discoveredRules.map((rule, idx) => (
+                      <label key={idx} style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', padding: '8px', backgroundColor: selectedRuleIndices.includes(idx) ? theme.tableRowHover : theme.cardBg, border: `1px solid ${selectedRuleIndices.includes(idx) ? theme.primary : theme.cardBorder}`, borderRadius: '4px', cursor: 'pointer', transition: '0.2s' }}>
+                        <input type="checkbox" checked={selectedRuleIndices.includes(idx)} onChange={() => handleToggleRule(idx)} style={{ marginTop: '3px', cursor: 'pointer' }} />
+                        <div style={{ fontSize: '0.85rem', color: theme.text }}>
+                          <strong style={{ display: 'block', color: theme.text, marginBottom: '2px' }}>{rule.label}</strong>
+                          <span style={{ color: theme.subText, fontSize: '0.75rem' }}>{rule.text}</span>
+                        </div>
+                      </label>
+                    ))}
+                  </div>
                 </div>
               )}
+
+              <textarea 
+                value={combinedRuleText} onChange={(e) => setCombinedRuleText(e.target.value)} 
+                placeholder="Combined rules will appear here for the AI to process..." 
+                style={{ width: '100%', height: '80px', padding: '10px', borderRadius: '4px', border: `1px solid ${theme.inputBorder}`, boxSizing: 'border-box', backgroundColor: theme.inputBg, color: theme.text, fontSize: '0.85rem', resize: 'vertical' }} 
+              />
             </div>
-          )}
 
-          {/* Data Dashboards (Only show if Audit Mode) */}
-          {activeMode === 'audit' && auditStrategy && (
-            <>
-              <div style={{ display: 'flex', gap: '20px', height: '250px' }}>
-                {/* Donut Chart */}
-                <div style={{ ...cardStyle, flex: 1 }}>
-                  <h4 style={{ margin: '0 0 10px 0', textAlign: 'center' }}>Risk Distribution</h4>
-                  <ResponsiveContainer width="100%" height="90%">
-                    <PieChart>
-                      <Pie data={getRiskDistribution()} innerRadius={60} outerRadius={80} paddingAngle={5} dataKey="value">
-                        {getRiskDistribution().map((entry, index) => <Cell key={`cell-${index}`} fill={RISK_COLORS[index % RISK_COLORS.length]} />)}
-                      </Pie>
-                      <Tooltip />
-                      <Legend />
-                    </PieChart>
-                  </ResponsiveContainer>
+            <div style={{...cardStyle, padding: '20px'}}>
+              <h3 style={{ color: '#d35400', marginTop: 0, fontSize: '1.2rem', display: 'flex', alignItems: 'center', gap: '8px' }}><span>3.</span> Execution</h3>
+              <button onClick={triggerAgent} disabled={isWorking || !combinedRuleText} style={{ width: '100%', backgroundColor: theme.danger, color: 'white', border: 'none', padding: '12px', borderRadius: '4px', cursor: (isWorking || !combinedRuleText) ? 'not-allowed' : 'pointer', fontWeight: 'bold', fontSize: '1.05rem', transition: '0.2s' }}>
+                {isWorking ? "⏳ Agent is Analyzing..." : "🚀 Run AI Auditor"}
+              </button>
+            </div>
+
+            <div style={{ ...cardStyle, backgroundColor: '#0d0d0d', color: '#00ff00', fontFamily: 'monospace', height: '220px', overflowY: 'auto', padding: '15px', border: '1px solid #333' }}>
+              <h4 style={{ color: '#fff', marginTop: 0, borderBottom: '1px solid #444', paddingBottom: '5px', fontSize: '0.9rem' }}>Terminal Output</h4>
+              {agentLogs.length === 0 && <span style={{ color: '#666', fontSize: '0.8rem' }}>Standby for execution...</span>}
+              {agentLogs.map((log, i) => (
+                <div key={i} style={{ marginBottom: '6px', fontSize: '0.75rem', lineHeight: '1.4' }}>
+                  <span style={{ color: log.type === 'thought' ? theme.warning : log.type === 'action' ? theme.primary : theme.danger, fontWeight: 'bold' }}>[{log.type.toUpperCase()}]</span> {log.text}
                 </div>
-                
-                {/* Bar Chart */}
-                <div style={{ ...cardStyle, flex: 1 }}>
-                  <h4 style={{ margin: '0 0 10px 0', textAlign: 'center' }}>Top Flagged Countries</h4>
-                  <ResponsiveContainer width="100%" height="90%">
-                    <BarChart data={getCountryDistribution()}>
-                      <XAxis dataKey="country" />
-                      <YAxis />
-                      <Tooltip />
-                      <Bar dataKey="count" fill="#8e44ad" radius={[4, 4, 0, 0]} />
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
+              ))}
+              <div ref={logEndRef} />
+            </div>
+
+          </div>
+
+          {/* ================= RIGHT PANE ================= */}
+          <div className="right-pane">
+            
+            {user.role === 'manager' && auditResults.length > 0 && (
+              <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', marginBottom: '5px' }}>
+                <button onClick={() => setActiveTab('audit')} style={{ flex: '1 1 auto', padding: '12px', fontWeight: 'bold', borderRadius: '6px', border: 'none', cursor: 'pointer', backgroundColor: activeTab === 'audit' ? theme.primary : theme.cardBorder, color: activeTab === 'audit' ? 'white' : theme.text, transition: '0.3s' }}>
+                  🔍 Compliance Audit Workspace
+                </button>
+                <button onClick={() => setActiveTab('report')} style={{ flex: '1 1 auto', padding: '12px', fontWeight: 'bold', borderRadius: '6px', border: 'none', cursor: 'pointer', backgroundColor: activeTab === 'report' ? theme.secondary : theme.cardBorder, color: activeTab === 'report' ? 'white' : theme.text, transition: '0.3s' }}>
+                  📑 Generate Executive STR Report
+                </button>
               </div>
+            )}
 
-              {/* Data Table */}
-              <div style={cardStyle}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px' }}>
-                  <h3 style={{ margin: 0, color: '#c0392b' }}>Flagged Transactions ({auditResults.length})</h3>
+            {!auditStrategy && !isWorking && (
+              <div style={{ ...cardStyle, minHeight: '600px', display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', color: theme.subText }}>
+                <h2 style={{ fontSize: 'clamp(1.5rem, 3vw, 2rem)', marginBottom: '10px', textAlign: 'center' }}>Workspace is Empty</h2>
+                <p style={{fontSize: '1rem', textAlign: 'center'}}>Select rules from the Knowledge Base to generate insights.</p>
+              </div>
+            )}
+
+            {auditStrategy && activeTab === 'audit' && (
+              <div style={{ ...cardStyle, borderLeft: `4px solid ${theme.primary}`, padding: '20px' }}>
+                <h3 style={{ color: theme.text, marginTop: 0, fontSize: '1.2rem' }}>📄 AI Compliance Strategy</h3>
+                <p style={{ fontSize: '1rem', lineHeight: '1.6', color: theme.subText, margin: 0, whiteSpace: 'pre-wrap' }}>{auditStrategy}</p>
+              </div>
+            )}
+
+            {activeTab === 'audit' && auditResults.length > 0 && (
+              <>
+                {/* CHARTS */}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '20px' }}>
+                  <div style={{ ...cardStyle, height: '300px', padding: '15px' }}>
+                    <h4 style={{ margin: '0 0 10px 0', textAlign: 'center', fontSize: '1rem', color: theme.text }}>Risk Distribution</h4>
+                    <ResponsiveContainer width="100%" height="90%">
+                      <PieChart>
+                        <Pie data={getRiskDistribution()} innerRadius={60} outerRadius={80} paddingAngle={5} dataKey="value">
+                          {getRiskDistribution().map((entry, index) => <Cell key={`cell-${index}`} fill={RISK_COLORS[index % RISK_COLORS.length]} />)}
+                        </Pie>
+                        <Tooltip contentStyle={{backgroundColor: theme.cardBg, borderColor: theme.cardBorder, color: theme.text}} />
+                        <Legend wrapperStyle={{fontSize: '0.85rem', color: theme.text}} />
+                      </PieChart>
+                    </ResponsiveContainer>
+                  </div>
+                  
+                  <div style={{ ...cardStyle, height: '300px', padding: '15px' }}>
+                    <h4 style={{ margin: '0 0 10px 0', textAlign: 'center', fontSize: '1rem', color: theme.text }}>Top Flagged Jurisdictions</h4>
+                    <ResponsiveContainer width="100%" height="90%">
+                      <BarChart data={getCountryDistribution()}>
+                        <XAxis dataKey="country" tick={{fontSize: 12, fill: theme.text}} />
+                        <YAxis tick={{fontSize: 12, fill: theme.text}} />
+                        <Tooltip contentStyle={{backgroundColor: theme.cardBg, borderColor: theme.cardBorder, color: theme.text}} />
+                        <Bar dataKey="count" fill={theme.secondary} radius={[4, 4, 0, 0]} />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
                 </div>
-                <div style={{ overflowY: 'auto', maxHeight: '300px' }}>
-                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.9rem' }}>
-                    <thead style={{ position: 'sticky', top: 0, backgroundColor: '#ecf0f1', zIndex: 1 }}>
-                      <tr>
-                        <th style={{ padding: '12px', textAlign: 'left', borderBottom: '2px solid #bdc3c7' }}>Date & Type</th>
-                        <th style={{ padding: '12px', textAlign: 'left', borderBottom: '2px solid #bdc3c7' }}>Customer Profile</th>
-                        <th style={{ padding: '12px', textAlign: 'left', borderBottom: '2px solid #bdc3c7' }}>Account Status</th>
-                        <th style={{ padding: '12px', textAlign: 'left', borderBottom: '2px solid #bdc3c7' }}>Amount (MYR)</th>
-                        <th style={{ padding: '12px', textAlign: 'left', borderBottom: '2px solid #bdc3c7' }}>Routing</th>
-                        <th style={{ padding: '12px', textAlign: 'left', borderBottom: '2px solid #bdc3c7' }}>Risk Score</th>
-                        <th style={{ padding: '12px', textAlign: 'left', borderBottom: '2px solid #bdc3c7' }}>AI Prediction</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {auditResults.map((row, i) => (
-                        <tr key={i} style={{ borderBottom: '1px solid #eee', backgroundColor: row.calculated_risk_score > 80 ? '#fff8f8' : 'white' }}>
-                          
-                          {/* 1. Date & Type */}
-                          <td style={{ padding: '12px' }}>
-                            <div style={{ fontWeight: 'bold', color: '#2c3e50' }}>{row.transaction_date}</div>
-                            <div style={{ fontSize: '0.8rem', color: '#7f8c8d', marginTop: '4px' }}>{row.transaction_type}</div>
-                          </td>
-                          
-                          {/* 2. Customer Profile (With Industry & PEP Badge) */}
-                          <td style={{ padding: '12px' }}>
-                            <div style={{ fontWeight: 'bold' }}>
-                              {row.customer_name} 
-                              {row.is_pep === 1 && (
-                                <span style={{ marginLeft: '8px', backgroundColor: '#e74c3c', color: 'white', padding: '2px 6px', borderRadius: '4px', fontSize: '0.7rem' }}>PEP</span>
-                              )}
-                            </div>
-                            <div style={{ fontSize: '0.8rem', color: '#34495e', marginTop: '4px' }}>Industry: {row.industry}</div>
-                          </td>
 
-                          {/* 3. Account Status (With Dormant Warning) */}
-                          <td style={{ padding: '12px' }}>
-                            {row.account_status === 'Dormant' ? (
-                                <span style={{ backgroundColor: '#f39c12', color: 'white', padding: '4px 8px', borderRadius: '4px', fontSize: '0.8rem', fontWeight: 'bold' }}>Dormant</span>
-                              ) : (
-                                <span style={{ color: '#27ae60', fontWeight: 'bold' }}>{row.account_status}</span>
-                            )}
-                          </td>
+                {/* DATA TABLE */}
+                <div style={{...cardStyle, padding: '0', overflow: 'hidden'}}>
+                  
+                  <div style={{ padding: '15px 20px', backgroundColor: theme.tableHeader, borderBottom: `1px solid ${theme.tableBorder}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
+                    <h3 style={{ margin: 0, color: theme.danger, fontSize: '1.2rem' }}>Flagged Transactions Ledger ({auditResults.length})</h3>
+                    <button onClick={handleDownloadCSV} style={{ backgroundColor: theme.success, color: 'white', border: 'none', padding: '8px 15px', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', fontSize: '0.9rem' }}>📥 Export CSV</button>
+                  </div>
 
-                          {/* 4. Amount */}
-                          <td style={{ padding: '12px', fontWeight: 'bold', fontSize: '1.05rem', color: '#2c3e50' }}>
-                            {row.amount?.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                          </td>
+                  {user.role === 'analyst' && selectedRows.length > 0 && (
+                    <div style={{ backgroundColor: theme.tableRowHover, padding: '12px 20px', borderBottom: `1px solid ${theme.tableBorder}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
+                      <span style={{ fontWeight: 'bold', color: theme.primary, fontSize: '0.95rem' }}>{selectedRows.length} items selected</span>
+                      <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                        <button onClick={() => handleBulkAction('Rejected')} style={{ backgroundColor: theme.subText, color: 'white', border: 'none', padding: '8px 15px', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', fontSize: '0.85rem' }}>🗑️ Clear (False Positive)</button>
+                        <button onClick={() => handleBulkAction('Escalated')} style={{ backgroundColor: theme.warning, color: '#000', border: 'none', padding: '8px 15px', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', fontSize: '0.85rem' }}>⚠️ Escalate to Manager</button>
+                      </div>
+                    </div>
+                  )}
 
-                          {/* 5. Routing (With Cross-Border Badge) */}
-                          <td style={{ padding: '12px' }}>
-                            <div style={{ fontWeight: 'bold' }}>{row.beneficiary_country}</div>
-                            {row.is_cross_border === 1 && (
-                               <div style={{ fontSize: '0.75rem', color: '#8e44ad', marginTop: '4px', fontWeight: 'bold' }}>🌍 Cross-Border</div>
-                            )}
-                          </td>
-
-                          {/* 6. Risk Score */}
-                          <td style={{ padding: '12px' }}>
-                            <span style={{ 
-                              backgroundColor: row.risk_score > 80 ? '#c0392b' : row.risk_score > 50 ? '#f39c12' : '#2ecc71', 
-                              color: 'white', padding: '6px 10px', borderRadius: '20px', fontWeight: 'bold' 
-                            }}>
-                              {row.risk_score}
-                            </span>
-                          </td>
-
-                          {/* 7. NEW: ML Prediction Score */}
-                          <td style={{ padding: '12px' }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                              <div style={{ width: '50px', backgroundColor: '#ecf0f1', borderRadius: '4px', height: '8px', overflow: 'hidden' }}>
-                                <div style={{ 
-                                  width: `${row.ml_probability || 0}%`, 
-                                  backgroundColor: (row.ml_probability || 0) > 80 ? '#c0392b' : (row.ml_probability || 0) > 50 ? '#f39c12' : '#2ecc71', 
-                                  height: '100%' 
-                                }}></div>
-                              </div>
-                              <span style={{ fontWeight: 'bold', fontSize: '0.85rem', color: '#2c3e50' }}>
-                                {row.ml_probability}%
-                              </span>
-                            </div>
-                          </td>
-
+                  <div style={{ overflowX: 'auto', maxHeight: '500px' }}>
+                    <table style={{ width: '100%', minWidth: '800px', borderCollapse: 'collapse', fontSize: '0.9rem' }}>
+                      <thead style={{ position: 'sticky', top: 0, backgroundColor: theme.tableHeader, zIndex: 1, boxShadow: '0 2px 4px rgba(0,0,0,0.05)' }}>
+                        <tr>
+                          {user.role === 'analyst' && (
+                            <th style={{ padding: '15px', textAlign: 'center', width: '50px', borderBottom: `2px solid ${theme.tableBorder}` }}>
+                              <input type="checkbox" onChange={handleSelectAllRows} checked={selectedRows.length > 0 && selectedRows.length === auditResults.filter(r => r.review_status === 'Pending').length} style={{ cursor: 'pointer', width: '16px', height: '16px' }} />
+                            </th>
+                          )}
+                          <th style={{ padding: '15px', textAlign: 'left', color: theme.subText, borderBottom: `2px solid ${theme.tableBorder}` }}>Transaction Details</th>
+                          <th style={{ padding: '15px', textAlign: 'left', color: theme.subText, borderBottom: `2px solid ${theme.tableBorder}` }}>Entity Profile</th>
+                          <th style={{ padding: '15px', textAlign: 'left', color: theme.subText, borderBottom: `2px solid ${theme.tableBorder}` }}>Risk Analytics</th>
+                          <th style={{ padding: '15px', textAlign: 'left', color: theme.subText, borderBottom: `2px solid ${theme.tableBorder}` }}>Compliance Action</th>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            </>
-          )}
+                      </thead>
+                      <tbody>
+                        {auditResults.map((row, i) => (
+                          <tr key={i} style={{ borderBottom: `1px solid ${theme.tableBorder}`, backgroundColor: selectedRows.includes(row.transaction_id) ? theme.tableRowHover : 'transparent', transition: '0.2s' }}>
+                            
+                            {user.role === 'analyst' && (
+                              <td style={{ padding: '15px', textAlign: 'center' }}>
+                                <input type="checkbox" checked={selectedRows.includes(row.transaction_id)} onChange={() => handleSelectRow(row.transaction_id)} disabled={row.review_status !== 'Pending'} style={{ cursor: row.review_status === 'Pending' ? 'pointer' : 'not-allowed', width: '16px', height: '16px' }} />
+                              </td>
+                            )}
+                            
+                            <td style={{ padding: '15px' }}>
+                              <div style={{ fontSize: '0.8rem', color: theme.subText, fontFamily: 'monospace' }}>ID: {row.transaction_id?.split('-')[0] || 'N/A'}...</div>
+                              <div style={{ fontWeight: 'bold', color: theme.text, marginTop: '4px' }}>{row.transaction_date}</div>
+                              <div style={{ fontWeight: 'bold', fontSize: '1.05rem', color: theme.danger, marginTop: '4px' }}>MYR {row.amount?.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+                              <div style={{ fontSize: '0.8rem', color: theme.subText, marginTop: '4px' }}>Route: <span style={{fontWeight: 'bold', color: theme.text}}>{row.beneficiary_country}</span> {row.is_cross_border === 1 && <span style={{color:theme.secondary, fontWeight:'bold'}}>(Cross-Border)</span>}</div>
+                              
+                              {/* NEW: DYNAMIC VIOLATION REASON BADGE */}
+                              {row.violation_reason && (
+                                <div style={{ marginTop: '8px' }}>
+                                  <span style={{ display: 'inline-block', backgroundColor: theme.badgeBg, color: theme.secondary, padding: '4px 8px', borderRadius: '12px', fontSize: '0.75rem', fontWeight: 'bold', border: `1px solid ${theme.secondary}` }}>
+                                    🚨 {row.violation_reason}
+                                  </span>
+                                </div>
+                              )}
+                            </td>
+                            
+                            <td style={{ padding: '15px' }}>
+                              <div style={{ fontWeight: 'bold', fontSize: '0.95rem', color: theme.text }}>{row.customer_name}</div>
+                              <div style={{ display: 'flex', gap: '6px', marginTop: '8px', flexWrap: 'wrap' }}>
+                                <span style={{ backgroundColor: theme.tableHeader, color: theme.text, padding: '3px 8px', borderRadius: '4px', fontSize: '0.75rem', border: `1px solid ${theme.tableBorder}` }}>{row.industry}</span>
+                                {row.is_pep === 1 && <span style={{ backgroundColor: theme.danger, color: 'white', padding: '3px 8px', borderRadius: '4px', fontSize: '0.75rem', fontWeight: 'bold' }}>PEP</span>}
+                                {row.account_status === 'Dormant' && <span style={{ backgroundColor: theme.warning, color: '#000', padding: '3px 8px', borderRadius: '4px', fontSize: '0.75rem', fontWeight: 'bold' }}>Dormant</span>}
+                              </div>
+                            </td>
 
+                            <td style={{ padding: '15px' }}>
+                              <div style={{ marginBottom: '8px' }}>
+                                <span style={{ fontSize: '0.85rem', color: theme.subText }}>Base Risk: </span>
+                                <span style={{ fontWeight: 'bold', color: row.risk_score > 80 ? theme.danger : theme.warning, fontSize: '0.95rem' }}>{row.risk_score}/100</span>
+                              </div>
+                              <div>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', color: theme.subText, marginBottom: '4px' }}>
+                                  <span>ML Prediction</span>
+                                  <span style={{fontWeight:'bold', color: theme.text}}>{row.ml_probability}%</span>
+                                </div>
+                                <div style={{ width: '120px', backgroundColor: theme.tableBorder, borderRadius: '4px', height: '8px', overflow: 'hidden' }}>
+                                  <div style={{ width: `${row.ml_probability || 0}%`, backgroundColor: (row.ml_probability || 0) > 80 ? theme.danger : theme.warning, height: '100%' }}></div>
+                                </div>
+                              </div>
+                            </td>
+
+                            <td style={{ padding: '15px' }}>
+                              {row.review_status === 'Approved' ? ( <span style={{ color: theme.success, fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '5px' }}>✅ STR Filed</span>
+                              ) : row.review_status === 'Rejected' ? ( <span style={{ color: theme.subText, fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '5px' }}>🗑️ Cleared</span>
+                              ) : row.review_status === 'Escalated' ? (
+                                  user.role === 'manager' ? (
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                                        <button onClick={() => handleReview(row.transaction_id, 'Approved')} style={{ backgroundColor: theme.success, color: 'white', border: 'none', padding: '6px 10px', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 'bold' }}>Approve STR</button>
+                                        <button onClick={() => handleReview(row.transaction_id, 'Rejected')} style={{ backgroundColor: theme.danger, color: 'white', border: 'none', padding: '6px 10px', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 'bold' }}>Reject</button>
+                                    </div>
+                                  ) : ( <span style={{ color: theme.warning, fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '5px' }}>⚠️ Escalated</span> )
+                              ) : ( <span style={{ color: theme.warning, fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '5px' }}>⏳ Pending Triage</span> )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </>
+            )}
+
+            {/* VIEW 2: MANAGER REPORT VIEW */}
+            {activeTab === 'report' && (
+               <div style={{ ...cardStyle, height: '100%', minHeight: '600px', display: 'flex', flexDirection: 'column' }}>
+                 <h3 style={{ margin: '0 0 10px 0', color: theme.secondary, fontSize: '1.4rem' }}>📑 Automated Suspicious Transaction Report (NLG)</h3>
+                 <p style={{ color: theme.subText, fontSize: '1rem', marginBottom: '20px' }}>
+                   Generate a formal regulatory report utilizing Natural Language Generation based on currently Escalated and Approved transactions.
+                 </p>
+                 
+                 <button onClick={handleGenerateReport} disabled={isGeneratingReport} style={{ width: '100%', padding: '15px', backgroundColor: theme.secondary, color: 'white', border: 'none', borderRadius: '6px', cursor: isGeneratingReport ? 'not-allowed' : 'pointer', fontWeight: 'bold', fontSize: '1.1rem', marginBottom: '20px', transition: '0.2s' }}>
+                   {isGeneratingReport ? "⏳ AI is Drafting Report..." : "✍️ Generate AI Report Summary"}
+                 </button>
+
+                 <textarea value={generatedReport} onChange={(e) => setGeneratedReport(e.target.value)} placeholder="The AI-generated report will appear here. You can manually edit the content before downloading..." style={{ flex: 1, width: '100%', minHeight: '400px', padding: '20px', borderRadius: '6px', border: `1px solid ${theme.inputBorder}`, boxSizing: 'border-box', backgroundColor: theme.inputBg, color: theme.text, fontFamily: 'Arial, sans-serif', fontSize: '1rem', lineHeight: '1.6', resize: 'vertical' }} />
+
+                 {generatedReport && !isGeneratingReport && (
+                   <button onClick={handleDownloadReport} style={{ marginTop: '20px', width: '100%', padding: '15px', backgroundColor: theme.success, color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '1.1rem', transition: '0.2s' }}>
+                     📥 Download Final STR (.txt)
+                   </button>
+                 )}
+               </div>
+            )}
+
+          </div>
         </div>
       </div>
     </div>
