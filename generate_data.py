@@ -47,7 +47,10 @@ def generate_enterprise_db(num_cust=800, num_acc=1200, num_txn=5000):
 
     # --- 3. TRANSACTIONS TABLE ---
     transactions = []
-    txn_types = ['WIRE_TRANSFER', 'CASH_DEPOSIT', 'P2P_TRANSFER', 'SWIFT_CROSS_BORDER']
+    
+    # Added DEPOSIT and WITHDRAWAL to match PDF rules
+    txn_types = ['WIRE_TRANSFER', 'CASH_DEPOSIT', 'P2P_TRANSFER', 'SWIFT_CROSS_BORDER', 'DEPOSIT', 'WITHDRAWAL']
+    fund_sources = ['Salary', 'Business Revenue', 'Investment', 'Unknown', 'Gift']
     
     for _ in range(num_txn):
         acc = random.choice(accounts)
@@ -57,7 +60,14 @@ def generate_enterprise_db(num_cust=800, num_acc=1200, num_txn=5000):
         amount = round(random.uniform(50.0, 250000.0), 2)
         is_cross_border = 1 if random.random() < 0.2 else 0
         dest_country = random.choice(nationalities) if is_cross_border else 'MY'
+        t_type = random.choice(txn_types) if not is_cross_border else 'SWIFT_CROSS_BORDER'
         
+        # Inject realistic Source of Funds
+        source = random.choice(fund_sources)
+        # Deliberately inject 'Unknown' source for some WITHDRAWALs to test PDF Rule 4.0
+        if t_type == 'WITHDRAWAL' and random.random() < 0.15:
+            source = 'Unknown'
+            
         # --- Advanced ML Anomaly Injection ---
         risk_score = 10
         # Scenario A: High-risk jurisdiction
@@ -68,15 +78,20 @@ def generate_enterprise_db(num_cust=800, num_acc=1200, num_txn=5000):
         if cust['industry'] in ['Student', 'Unemployed'] and amount > 50000: risk_score += 50
         # Scenario D: PEP making large transfers
         if cust['is_pep'] == 1 and amount > 100000: risk_score += 35
+        # Scenario E: High Value Deposit (Matches Rule 2.0)
+        if t_type == 'DEPOSIT' and amount > 50000: risk_score += 30
+        # Scenario F: Unknown Source Withdrawal (Matches Rule 4.0)
+        if t_type == 'WITHDRAWAL' and source == 'Unknown' and amount > 20000: risk_score += 40
         
         transactions.append({
             "transaction_id": fake.uuid4(),
             "account_id": acc['account_id'],
             "timestamp": fake.date_time_between(start_date='-90d', end_date='now').strftime("%Y-%m-%d %H:%M:%S"),
-            "transaction_type": random.choice(txn_types) if not is_cross_border else 'SWIFT_CROSS_BORDER',
+            "transaction_type": t_type,
             "amount_myr": amount,
             "beneficiary_country": dest_country,
             "is_cross_border": is_cross_border,
+            "source_of_funds": source, 
             "calculated_risk_score": min(risk_score, 100)
         })
     df_transactions = pd.DataFrame(transactions)
@@ -90,7 +105,7 @@ def generate_enterprise_db(num_cust=800, num_acc=1200, num_txn=5000):
     
     print("\n✅ Database Successfully Architected: 'banking_data.sqlite'")
     print(f"📊 Customers: {len(df_customers)} | Accounts: {len(df_accounts)} | Transactions: {len(df_transactions)}")
-    print("🔥 The environment is now ready for Agentic JOIN queries.")
+    print("🔥 The environment is now ready for Agentic JOIN queries (Includes 'source_of_funds').")
 
 if __name__ == "__main__":
     generate_enterprise_db()
