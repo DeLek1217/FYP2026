@@ -1,19 +1,20 @@
+import os
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import sqlite3
 import pandas as pd
-import joblib  # 👈 MLOps 必须的库
+import joblib
 from reader_agent import ReaderAgent
 from auditor_agent import AuditorAgent
 
 app = Flask(__name__)
 CORS(app)
 
-# 1. 初始化 Agents
+# --- 1. INITIALIZE AGENTS ---
 reader_agent = ReaderAgent()
 auditor_agent = AuditorAgent()
 
-# 2. 部署 Machine Learning 模型 (MLOps)
+# --- 2. LOAD MLOPS MODELS ---
 print("Loading ML Models into API...")
 try:
     ml_model = joblib.load('aml_rf_model.pkl')
@@ -21,8 +22,50 @@ try:
     le_status = joblib.load('le_status.pkl')
     print("✅ ML Risk Predictor Online")
 except Exception as e:
-    print(f"⚠️ 无法加载 ML 模型，请确认是否运行过 train_model.py. Error: {e}")
+    print(f"⚠️ Failed to load ML models. Ensure train_model.py was executed. Error: {e}")
     ml_model = None
+
+# --- 3. MOCK DATABASE FOR AUTHENTICATION ---
+# In a real enterprise app, this would be connected to a secure database or Active Directory
+MOCK_USERS = {
+    "analyst": {"name": "Alice (Junior Analyst)", "role": "analyst", "password": "123"},
+    "manager": {"name": "Bob (Compliance Manager)", "role": "manager", "password": "123"}
+}
+
+# ==========================================
+# AUTHENTICATION & HITL ROUTES
+# ==========================================
+
+@app.route('/login', methods=['POST'])
+def login():
+    data = request.get_json()
+    username = data.get("username", "").lower()
+    password = data.get("password", "")
+    
+    user = MOCK_USERS.get(username)
+    if user and user["password"] == password:
+        # Never send the password back to the client
+        return jsonify({"name": user["name"], "role": user["role"]})
+    
+    return jsonify({"error": "Invalid username or password"}), 401
+
+@app.route('/review_transaction', methods=['POST'])
+def review_transaction():
+    """Mock endpoint to handle single transaction reviews by Managers."""
+    data = request.get_json()
+    # In a production environment, you would run an UPDATE SQL query here
+    # e.g., UPDATE transactions SET review_status = ? WHERE transaction_id = ?
+    return jsonify({"status": "success", "message": "Transaction review saved."})
+
+@app.route('/bulk_review', methods=['POST'])
+def bulk_review():
+    """Mock endpoint to handle bulk actions by Analysts."""
+    data = request.get_json()
+    return jsonify({"status": "success", "message": f"Processed {len(data.get('transaction_ids', []))} transactions."})
+
+# ==========================================
+# AGENTIC WORKFLOW & DATA PIPELINE ROUTES
+# ==========================================
 
 @app.route('/upload', methods=['POST'])
 def upload_file():
@@ -62,64 +105,52 @@ def extract_rule():
 def run_audit():
     data = request.get_json()
     rule = data.get("rule_text", "")
-    mode = data.get("mode", "audit")
     
     if not rule:
         return jsonify({"error": "No rule text provided"}), 400
 
     try:
-        agent_result = auditor_agent.run_agentic_workflow(rule, mode=mode)
+        # 1. Run the Agent (It decides autonomously if SQL is needed)
+        agent_result = auditor_agent.run_agentic_workflow(rule)
         
         if "error" in agent_result:
             return jsonify({"error": agent_result["error"]}), 500
 
-        if mode == "advisory":
-            return jsonify({
-                "status": "success",
-                "mode": "advisory",
-                "strategy": agent_result["strategy"],
-                "thoughts": agent_result["thoughts"]
-            })
+        sql_code = agent_result.get("sql_code", "")
+        records = []
 
-        sql_code = agent_result["sql_code"]
-        
-        conn = sqlite3.connect("banking_data.sqlite")
-        results_df = pd.read_sql_query(sql_code, conn)
-        conn.close()
-        
-        records = results_df.to_dict(orient="records")
+        # 2. Only execute DB and ML if SQL was generated
+        if sql_code:
+            conn = sqlite3.connect("banking_data.sqlite")
+            results_df = pd.read_sql_query(sql_code, conn)
+            conn.close()
+            
+            records = results_df.to_dict(orient="records")
 
-        # --- 🚀 MLOPS 核心：模型预测 ---
-        if ml_model is not None and len(records) > 0:
-            agent_result["thoughts"].append({"type": "action", "text": f"Running ML Predictive Model on {len(records)} transactions..."})
-            for row in records:
-                try:
-                    # 转换 categorical 数据
-                    ind_enc = le_industry.transform([row.get('industry', 'Unknown')])[0] if row.get('industry') in le_industry.classes_ else 0
-                    stat_enc = le_status.transform([row.get('account_status', 'Active')])[0] if row.get('account_status') in le_status.classes_ else 0
-                    
-                    # 组装 Feature Array (必须和 train_model.py 的顺序一模一样)
-                    # ['is_pep', 'annual_income_myr', 'amount_myr', 'is_cross_border', 'industry_encoded', 'status_encoded']
-                    features = [[
-                        row.get('is_pep', 0),
-                        row.get('annual_income_myr', 50000),
-                        row.get('amount', 0),
-                        row.get('is_cross_border', 0),
-                        ind_enc,
-                        stat_enc
-                    ]]
-                    
-                    # 算出 洗钱概率 (Probability)
-                    prob = ml_model.predict_proba(features)[0][1] 
-                    row['ml_probability'] = round(prob * 100, 2)  # 转成 %
-                    
-                except Exception as e:
-                    row['ml_probability'] = 0.0 # 预测失败的 fallback
-                    print(f"ML Prediction Error on row: {e}")
-
+            # 3. MLOps: Predict probabilities
+            if ml_model is not None and len(records) > 0:
+                agent_result["thoughts"].append({"type": "action", "text": f"Running ML Pipeline on {len(records)} records..."})
+                for row in records:
+                    try:
+                        ind_enc = le_industry.transform([row.get('industry', 'Unknown')])[0] if row.get('industry') in le_industry.classes_ else 0
+                        stat_enc = le_status.transform([row.get('account_status', 'Active')])[0] if row.get('account_status') in le_status.classes_ else 0
+                        
+                        features = [[
+                            row.get('is_pep', 0),
+                            row.get('annual_income_myr', 50000),
+                            row.get('amount', 0),
+                            row.get('is_cross_border', 0),
+                            ind_enc,
+                            stat_enc
+                        ]]
+                        
+                        prob = ml_model.predict_proba(features)[0][1] 
+                        row['ml_probability'] = round(prob * 100, 2)
+                    except Exception as e:
+                        row['ml_probability'] = 0.0 
+                        
         return jsonify({
             "status": "success",
-            "mode": "audit",
             "strategy": agent_result["strategy"],
             "thoughts": agent_result["thoughts"], 
             "generated_sql": sql_code,
@@ -127,6 +158,47 @@ def run_audit():
             "violation_data": records 
         })
         
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+# ==========================================
+# NLG (NATURAL LANGUAGE GENERATION) ROUTE
+# ==========================================
+
+@app.route('/generate_report', methods=['POST'])
+def generate_report():
+    data = request.get_json()
+    transactions = data.get("transactions", [])
+    
+    if not transactions:
+        return jsonify({"error": "No transactions provided for reporting."}), 400
+
+    # Filter transactions that require regulatory reporting
+    critical_txns = [t for t in transactions if t.get('review_status') in ['Escalated', 'Approved']]
+    
+    if not critical_txns:
+        return jsonify({"report": "No escalated or approved transactions require reporting at this time. All items are either pending triage or cleared as false positives."})
+
+    # Prompt the LLM to generate a formal executive summary
+    prompt = f"""
+    You are a Chief Compliance Officer at a major FinTech institution.
+    Write a formal Suspicious Transaction Report (STR) Executive Summary based on the following flagged transactions:
+    
+    {critical_txns}
+
+    Format Requirement:
+    1. Title: STR EXECUTIVE SUMMARY
+    2. Overview: Total number of critical transactions and summary of rules broken.
+    3. Key Risk Indicators: Mention any ML Probability scores > 80%, Cross-Border routing, or PEP involvement.
+    4. Analyst & Manager Action: State that these items have been escalated and approved for regulatory submission.
+    5. Conclusion/Next Steps.
+    
+    Keep the tone strictly professional, legal, and objective. Do not use markdown formatting like ** or ##, use standard plain text formatting suitable for a .txt file.
+    """
+    
+    try:
+        response = auditor_agent.llm.invoke(prompt).content
+        return jsonify({"report": response.strip()})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
