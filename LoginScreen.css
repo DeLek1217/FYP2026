@@ -1,0 +1,149 @@
+.login-wrapper {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100vw;
+  height: 100vh;
+  
+  /* --- Animated Blue & Purple Gradient --- */
+  background: linear-gradient(-45deg, #0a041c, #301469, #0f2b6e, #240b4a);
+  background-size: 400% 400%;
+  animation: gradientDrift 12s ease infinite;
+  
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  margin: 0;
+}
+
+/* This is the animation that makes the colors "breathe" */
+@keyframes gradientDrift {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+/* Add this animation rule right below the wrapper */
+@keyframes gradientDrift {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+/* The Glowing Glassmorphism Card */
+.login-glowing-card {
+  background: rgba(255, 255, 255, 0.15); 
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  padding: 50px 40px;
+  border-radius: 30px;
+  width: 90%;
+  max-width: 360px;
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  box-shadow: 
+    0 8px 32px 0 rgba(0, 0, 0, 0.1), 
+    inset 0 0 15px rgba(255, 255, 255, 0.2); 
+  text-align: center;
+}
+
+/* The circular outline around the logo */
+.logo-circle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 160px; 
+  height: 160px; 
+  border-radius: 50%;
+  margin-bottom: 10px; 
+  background-color: #fff;
+}
+
+.regubot-logo {
+  max-width: 75%; 
+  max-height: 75%;
+  object-fit: contain;
+}
+
+.system-title {
+  color: #4e88bc; 
+  font-size: 2.2rem;
+  margin: 0 0 20px 0;
+  font-weight: 1000;
+  letter-spacing: 2px;
+  text-shadow: 1px 2px 3px rgba(0, 0, 0, 0.2); 
+}
+
+h2{
+  color: whitesmoke; 
+  font-size: 1.1rem;
+  margin: 0 0 20px 0;
+  font-weight: 500;
+}
+
+.login-form {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+/*transparent input fields */
+.input-group {
+  position: relative;
+  display: flex;
+  align-items: center;
+  background: rgba(0, 0, 0, 0.15); 
+  border-radius: 8px;
+  padding: 0 15px;
+}
+
+.input-icon {
+  color: #888;
+  font-size: 1.1rem;
+  margin-right: 10px;
+}
+
+.input-group input {
+  flex: 1;
+  padding: 15px 0;
+  border: none;
+  background: transparent;
+  color: white;
+  font-size: 1rem;
+  outline: none;
+}
+
+.input-group input::placeholder {
+  color: rgb(200, 197, 197);
+}
+
+.password-toggle {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: #e9e5e5;
+  font-size: 1.1rem;
+  padding: 0;
+}
+
+
+.login-button {
+  background: #095ba3; 
+  color: white;
+  padding: 16px;
+  border: none;
+  border-radius: 8px;
+  font-weight: 700;
+  letter-spacing: 1.5px; 
+  cursor: pointer;
+  font-size: 1rem;
+  transition: background 0.3s, box-shadow 0.3s;
+}
+
+.login-button:hover {
+  background: #0d63ad;
+  box-shadow: 0 0 15px rgba(0, 183, 255, 0.4);
+}
+
+.login-error-text {
+  color: #ff4d4d;
+  margin-top: 20px;
+  font-weight: bold;
+  font-size: 0.9rem;
+}
