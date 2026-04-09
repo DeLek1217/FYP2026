@@ -1,5 +1,8 @@
 import { useState, useRef, useEffect } from 'react'
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer } from 'recharts'
+import LoginScreen from './LoginScreen.jsx'
+import regubotLogo from './assets/regubotLogo.png'
+
 
 function App() {
   // --- AUTHENTICATION STATE ---
@@ -248,17 +251,12 @@ function App() {
   // ================= RENDER LOGIN SCREEN =================
   if (!user) {
     return (
-      <div style={{ backgroundColor: theme.bg, color: theme.text, height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'Segoe UI, Tahoma, sans-serif' }}>
-        <div style={{ ...cardStyle, width: '90%', maxWidth: '400px', textAlign: 'center' }}>
-          <h2 style={{ color: theme.text, marginBottom: '20px' }}>🔐 ReguBot Secure Access</h2>
-          <form onSubmit={handleLogin} style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
-            <input type="text" placeholder="Username (analyst or manager)" value={loginForm.username} onChange={e => setLoginForm({...loginForm, username: e.target.value})} style={{ padding: '12px', borderRadius: '4px', border: `1px solid ${theme.inputBorder}`, backgroundColor: theme.inputBg, color: theme.text }} required />
-            <input type="password" placeholder="Password (123)" value={loginForm.password} onChange={e => setLoginForm({...loginForm, password: e.target.value})} style={{ padding: '12px', borderRadius: '4px', border: `1px solid ${theme.inputBorder}`, backgroundColor: theme.inputBg, color: theme.text }} required />
-            <button type="submit" style={{ backgroundColor: theme.primary, color: 'white', padding: '12px', border: 'none', borderRadius: '4px', fontWeight: 'bold', cursor: 'pointer', transition: '0.2s' }}>Sign In</button>
-          </form>
-          {loginError && <p style={{ color: theme.danger, marginTop: '15px', fontWeight: 'bold' }}>{loginError}</p>}
-        </div>
-      </div>
+      <LoginScreen 
+        handleLogin={handleLogin}
+        loginError={loginError}
+        loginForm={loginForm}
+        setLoginForm={setLoginForm}
+      />
     )
   }
 
@@ -286,9 +284,15 @@ function App() {
         
         {/* HEADER & SETTINGS */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '15px' }}>
-          <h1 style={{ color: theme.text, margin: 0, fontWeight: '800', fontSize: 'clamp(1.5rem, 4vw, 2rem)' }}>🤖 ReguBot: Agentic Compliance</h1>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '15px', flexWrap: 'wrap' }}>
-            
+          {/* NEW: Logo and Title paired together */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
+            <img src={regubotLogo} alt="ReguBot Logo" style={{ height: '80px', objectFit: 'contain' }} />
+            <h1 style={{ color: theme.text, margin: 0, fontWeight: '800', fontSize: 'clamp(1.5rem, 4vw, 2rem)' }}>
+              ReguBot: Agentic Compliance
+            </h1>
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: '15px', flexWrap: 'wrap' }}>  
             <select value={themeMode} onChange={(e) => setThemeMode(e.target.value)} style={{ padding: '8px', borderRadius: '4px', border: `1px solid ${theme.cardBorder}`, backgroundColor: theme.cardBg, color: theme.text, cursor: 'pointer', fontWeight: 'bold' }}>
               <option value="system">🖥️ System Theme</option>
               <option value="light">☀️ Light Mode</option>
