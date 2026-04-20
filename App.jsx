@@ -57,9 +57,10 @@ function App() {
   const [auditResults, setAuditResults] = useState([])
   const [isWorking, setIsWorking] = useState(false)
   
-  // --- HITL & MANAGER REPORT STATES ---
+  // --- HITL & SENIOR REPORT STATES ---
   const [selectedRows, setSelectedRows] = useState([])
   const [activeTab, setActiveTab] = useState('audit')
+  const [tableFilter, setTableFilter] = useState('all') // NEW: 'all' or 'escalated'
   const [generatedReport, setGeneratedReport] = useState("")
   const [isGeneratingReport, setIsGeneratingReport] = useState(false)
 
@@ -75,7 +76,11 @@ function App() {
         method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(loginForm)
       })
       const data = await res.json()
-      if (res.ok) { setUser(data); setActiveTab('audit'); } 
+      if (res.ok) { 
+        setUser(data); 
+        setActiveTab('audit'); 
+        setTableFilter('all'); // Reset filter on login
+      } 
       else { setLoginError(data.error) }
     } catch (err) { setLoginError("Failed to connect to server.") }
   }
@@ -134,6 +139,11 @@ function App() {
     } catch (err) { alert("Failed to process bulk action.") }
   }
 
+  // NEW: Dynamic Table Filtering
+  const displayedResults = tableFilter === 'escalated' 
+    ? auditResults.filter(r => r.review_status === 'Escalated') 
+    : auditResults;
+
   const handleSelectRow = (id) => {
     if (!id) return;
     setSelectedRows(prev => prev.includes(id) ? prev.filter(r => r !== id) : [...prev, id])
@@ -141,8 +151,11 @@ function App() {
   
   const handleSelectAllRows = (e) => {
     if (e.target.checked) {
-      const pendingIds = auditResults.filter(r => r.review_status === 'Pending' && r.transaction_id).map(r => r.transaction_id)
-      setSelectedRows(pendingIds)
+      const selectableIds = displayedResults
+        .filter(r => user.role === 'senior' ? (r.review_status === 'Pending' || r.review_status === 'Escalated') : r.review_status === 'Pending')
+        .filter(r => r.transaction_id)
+        .map(r => r.transaction_id)
+      setSelectedRows(selectableIds)
     } else { setSelectedRows([]) }
   }
 
@@ -176,7 +189,7 @@ function App() {
 
   const triggerAgent = async () => {
     if (!combinedRuleText) return;
-    setIsWorking(true); setSelectedRows([]); setActiveTab('audit');
+    setIsWorking(true); setSelectedRows([]); setActiveTab('audit'); setTableFilter('all');
     setAgentLogs([{ type: "system", text: `Initializing Autonomous AI Auditor...` }])
     setAuditStrategy(""); setAuditResults([]); setGeneratedReport("");
     
@@ -222,9 +235,8 @@ function App() {
 
   const handleDownloadCSV = () => {
     if (!auditResults || auditResults.length === 0) return;
-    // Added Violation Reason to the CSV Export
     const headers = [ "Transaction ID", "Date", "Customer Name", "Amount (MYR)", "Violation Reason", "Risk Score", "ML Probability (%)", "Review Status" ]
-    const csvRows = auditResults.map(r => [
+    const csvRows = displayedResults.map(r => [
       r.transaction_id || 'N/A', r.transaction_date, `"${r.customer_name}"`, r.amount, `"${r.violation_reason || 'Unknown Rule'}"`, r.risk_score, r.ml_probability, r.review_status || 'Pending'
     ].join(','))
     const blob = new Blob([[headers.join(','), ...csvRows].join('\n')], { type: 'text/csv;charset=utf-8;' })
@@ -235,18 +247,25 @@ function App() {
   // --- CHART DATA PROCESSING ---
   const getRiskDistribution = () => {
     let low = 0, med = 0, high = 0;
-    auditResults.forEach(r => { if (r.risk_score < 50) low++; else if (r.risk_score <= 80) med++; else high++; })
+    displayedResults.forEach(r => { if (r.risk_score < 50) low++; else if (r.risk_score <= 80) med++; else high++; })
     return [ { name: 'Low Risk', value: low }, { name: 'Medium Risk', value: med }, { name: 'High Risk', value: high } ]
   }
   const RISK_COLORS = [theme.success, theme.warning, theme.danger]
 
   const getCountryDistribution = () => {
     const counts = {};
-    auditResults.forEach(r => { counts[r.beneficiary_country] = (counts[r.beneficiary_country] || 0) + 1; })
+    displayedResults.forEach(r => { counts[r.beneficiary_country] = (counts[r.beneficiary_country] || 0) + 1; })
     return Object.keys(counts).map(key => ({ country: key, count: counts[key] })).sort((a,b)=> b.count - a.count).slice(0, 5)
   }
 
   const cardStyle = { backgroundColor: theme.cardBg, padding: '20px', borderRadius: '8px', boxShadow: '0 4px 12px rgba(0,0,0,0.05)', border: `1px solid ${theme.cardBorder}`, color: theme.text }
+
+  // NEW: REUSABLE INFO TOOLTIP COMPONENT
+  const InfoIcon = ({ text }) => (
+    <span title={text} style={{ cursor: 'help', marginLeft: '6px', fontSize: '0.75rem', backgroundColor: theme.primary, color: 'white', borderRadius: '50%', width: '16px', height: '16px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold' }}>
+      ?
+    </span>
+  );
 
   // ================= RENDER LOGIN SCREEN =================
   if (!user) {
@@ -284,7 +303,6 @@ function App() {
         
         {/* HEADER & SETTINGS */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '15px' }}>
-          {/* NEW: Logo and Title paired together */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
             <img src={regubotLogo} alt="ReguBot Logo" style={{ height: '80px', objectFit: 'contain' }} />
             <h1 style={{ color: theme.text, margin: 0, fontWeight: '800', fontSize: 'clamp(1.5rem, 4vw, 2rem)' }}>
@@ -384,7 +402,7 @@ function App() {
           {/* ================= RIGHT PANE ================= */}
           <div className="right-pane">
             
-            {user.role === 'manager' && auditResults.length > 0 && (
+            {user.role === 'senior' && auditResults.length > 0 && (
               <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', marginBottom: '5px' }}>
                 <button onClick={() => setActiveTab('audit')} style={{ flex: '1 1 auto', padding: '12px', fontWeight: 'bold', borderRadius: '6px', border: 'none', cursor: 'pointer', backgroundColor: activeTab === 'audit' ? theme.primary : theme.cardBorder, color: activeTab === 'audit' ? 'white' : theme.text, transition: '0.3s' }}>
                   🔍 Compliance Audit Workspace
@@ -443,16 +461,32 @@ function App() {
                 <div style={{...cardStyle, padding: '0', overflow: 'hidden'}}>
                   
                   <div style={{ padding: '15px 20px', backgroundColor: theme.tableHeader, borderBottom: `1px solid ${theme.tableBorder}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
-                    <h3 style={{ margin: 0, color: theme.danger, fontSize: '1.2rem' }}>Flagged Transactions Ledger ({auditResults.length})</h3>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
+                      <h3 style={{ margin: 0, color: theme.danger, fontSize: '1.2rem' }}>Flagged Transactions Ledger ({displayedResults.length})</h3>
+                      
+                      {/* SENIOR FILTER TAB */}
+                      {user.role === 'senior' && (
+                        <div style={{ display: 'flex', gap: '5px', backgroundColor: theme.cardBg, padding: '4px', borderRadius: '6px', border: `1px solid ${theme.cardBorder}` }}>
+                          <button onClick={() => {setTableFilter('all'); setSelectedRows([]);}} style={{ padding: '4px 10px', borderRadius: '4px', border: 'none', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 'bold', backgroundColor: tableFilter === 'all' ? theme.primary : 'transparent', color: tableFilter === 'all' ? 'white' : theme.subText }}>All Items</button>
+                          <button onClick={() => {setTableFilter('escalated'); setSelectedRows([]);}} style={{ padding: '4px 10px', borderRadius: '4px', border: 'none', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 'bold', backgroundColor: tableFilter === 'escalated' ? theme.warning : 'transparent', color: tableFilter === 'escalated' ? '#000' : theme.subText }}>Escalated Only</button>
+                        </div>
+                      )}
+                    </div>
                     <button onClick={handleDownloadCSV} style={{ backgroundColor: theme.success, color: 'white', border: 'none', padding: '8px 15px', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', fontSize: '0.9rem' }}>📥 Export CSV</button>
                   </div>
 
-                  {user.role === 'analyst' && selectedRows.length > 0 && (
+                  {/* DYNAMIC BULK ACTIONS BAR */}
+                  {(user.role === 'junior' || user.role === 'senior') && selectedRows.length > 0 && (
                     <div style={{ backgroundColor: theme.tableRowHover, padding: '12px 20px', borderBottom: `1px solid ${theme.tableBorder}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
                       <span style={{ fontWeight: 'bold', color: theme.primary, fontSize: '0.95rem' }}>{selectedRows.length} items selected</span>
                       <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
                         <button onClick={() => handleBulkAction('Rejected')} style={{ backgroundColor: theme.subText, color: 'white', border: 'none', padding: '8px 15px', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', fontSize: '0.85rem' }}>🗑️ Clear (False Positive)</button>
-                        <button onClick={() => handleBulkAction('Escalated')} style={{ backgroundColor: theme.warning, color: '#000', border: 'none', padding: '8px 15px', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', fontSize: '0.85rem' }}>⚠️ Escalate to Manager</button>
+                        
+                        {user.role === 'junior' ? (
+                          <button onClick={() => handleBulkAction('Escalated')} style={{ backgroundColor: theme.warning, color: '#000', border: 'none', padding: '8px 15px', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', fontSize: '0.85rem' }}>⚠️ Escalate to Senior</button>
+                        ) : (
+                          <button onClick={() => handleBulkAction('Approved')} style={{ backgroundColor: theme.success, color: 'white', border: 'none', padding: '8px 15px', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', fontSize: '0.85rem' }}>✅ Approve STR (File)</button>
+                        )}
                       </div>
                     </div>
                   )}
@@ -461,82 +495,99 @@ function App() {
                     <table style={{ width: '100%', minWidth: '800px', borderCollapse: 'collapse', fontSize: '0.9rem' }}>
                       <thead style={{ position: 'sticky', top: 0, backgroundColor: theme.tableHeader, zIndex: 1, boxShadow: '0 2px 4px rgba(0,0,0,0.05)' }}>
                         <tr>
-                          {user.role === 'analyst' && (
+                          {(user.role === 'junior' || user.role === 'senior') && (
                             <th style={{ padding: '15px', textAlign: 'center', width: '50px', borderBottom: `2px solid ${theme.tableBorder}` }}>
-                              <input type="checkbox" onChange={handleSelectAllRows} checked={selectedRows.length > 0 && selectedRows.length === auditResults.filter(r => r.review_status === 'Pending').length} style={{ cursor: 'pointer', width: '16px', height: '16px' }} />
+                              <input type="checkbox" onChange={handleSelectAllRows} checked={selectedRows.length > 0 && selectedRows.length === displayedResults.filter(r => user.role === 'senior' ? (r.review_status === 'Pending' || r.review_status === 'Escalated') : r.review_status === 'Pending').length} style={{ cursor: 'pointer', width: '16px', height: '16px' }} />
                             </th>
                           )}
-                          <th style={{ padding: '15px', textAlign: 'left', color: theme.subText, borderBottom: `2px solid ${theme.tableBorder}` }}>Transaction Details</th>
-                          <th style={{ padding: '15px', textAlign: 'left', color: theme.subText, borderBottom: `2px solid ${theme.tableBorder}` }}>Entity Profile</th>
-                          <th style={{ padding: '15px', textAlign: 'left', color: theme.subText, borderBottom: `2px solid ${theme.tableBorder}` }}>Risk Analytics</th>
-                          <th style={{ padding: '15px', textAlign: 'left', color: theme.subText, borderBottom: `2px solid ${theme.tableBorder}` }}>Compliance Action</th>
+                          <th style={{ padding: '15px', textAlign: 'left', color: theme.subText, borderBottom: `2px solid ${theme.tableBorder}` }}>
+                            Transaction Details
+                            <InfoIcon text="Shows raw transaction metadata and rules violated. Look out for large amounts or high-risk routing destinations." />
+                          </th>
+                          <th style={{ padding: '15px', textAlign: 'left', color: theme.subText, borderBottom: `2px solid ${theme.tableBorder}` }}>
+                            Entity Profile
+                            <InfoIcon text="Customer KYC data. 'Dormant' accounts moving funds or 'PEP' (Politically Exposed Persons) require strict monitoring." />
+                          </th>
+                          <th style={{ padding: '15px', textAlign: 'left', color: theme.subText, borderBottom: `2px solid ${theme.tableBorder}` }}>
+                            Risk Analytics
+                            <InfoIcon text="SOP TO ESCALATE: Base Risk > 80 OR ML Prediction > 50%. Base Risk is drawn from compliance rules. ML is the AI's probability assessment." />
+                          </th>
+                          <th style={{ padding: '15px', textAlign: 'left', color: theme.subText, borderBottom: `2px solid ${theme.tableBorder}` }}>
+                            Compliance Action
+                            <InfoIcon text="Workflow state. Juniors handle 'Pending' triage. Seniors review 'Escalated' items to make the final STR filing decision." />
+                          </th>
                         </tr>
                       </thead>
                       <tbody>
-                        {auditResults.map((row, i) => (
-                          <tr key={i} style={{ borderBottom: `1px solid ${theme.tableBorder}`, backgroundColor: selectedRows.includes(row.transaction_id) ? theme.tableRowHover : 'transparent', transition: '0.2s' }}>
-                            
-                            {user.role === 'analyst' && (
-                              <td style={{ padding: '15px', textAlign: 'center' }}>
-                                <input type="checkbox" checked={selectedRows.includes(row.transaction_id)} onChange={() => handleSelectRow(row.transaction_id)} disabled={row.review_status !== 'Pending'} style={{ cursor: row.review_status === 'Pending' ? 'pointer' : 'not-allowed', width: '16px', height: '16px' }} />
-                              </td>
-                            )}
-                            
-                            <td style={{ padding: '15px' }}>
-                              <div style={{ fontSize: '0.8rem', color: theme.subText, fontFamily: 'monospace' }}>ID: {row.transaction_id?.split('-')[0] || 'N/A'}...</div>
-                              <div style={{ fontWeight: 'bold', color: theme.text, marginTop: '4px' }}>{row.transaction_date}</div>
-                              <div style={{ fontWeight: 'bold', fontSize: '1.05rem', color: theme.danger, marginTop: '4px' }}>MYR {row.amount?.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
-                              <div style={{ fontSize: '0.8rem', color: theme.subText, marginTop: '4px' }}>Route: <span style={{fontWeight: 'bold', color: theme.text}}>{row.beneficiary_country}</span> {row.is_cross_border === 1 && <span style={{color:theme.secondary, fontWeight:'bold'}}>(Cross-Border)</span>}</div>
+                        {displayedResults.map((row, i) => {
+                          const isCheckboxDisabled = user.role === 'junior' 
+                            ? row.review_status !== 'Pending' 
+                            : (row.review_status === 'Approved' || row.review_status === 'Rejected');
+
+                          return (
+                            <tr key={i} style={{ borderBottom: `1px solid ${theme.tableBorder}`, backgroundColor: selectedRows.includes(row.transaction_id) ? theme.tableRowHover : 'transparent', transition: '0.2s' }}>
                               
-                              {/* NEW: DYNAMIC VIOLATION REASON BADGE */}
-                              {row.violation_reason && (
-                                <div style={{ marginTop: '8px' }}>
-                                  <span style={{ display: 'inline-block', backgroundColor: theme.badgeBg, color: theme.secondary, padding: '4px 8px', borderRadius: '12px', fontSize: '0.75rem', fontWeight: 'bold', border: `1px solid ${theme.secondary}` }}>
-                                    🚨 {row.violation_reason}
-                                  </span>
-                                </div>
+                              {(user.role === 'junior' || user.role === 'senior') && (
+                                <td style={{ padding: '15px', textAlign: 'center' }}>
+                                  <input type="checkbox" checked={selectedRows.includes(row.transaction_id)} onChange={() => handleSelectRow(row.transaction_id)} disabled={isCheckboxDisabled} style={{ cursor: isCheckboxDisabled ? 'not-allowed' : 'pointer', width: '16px', height: '16px' }} />
+                                </td>
                               )}
-                            </td>
-                            
-                            <td style={{ padding: '15px' }}>
-                              <div style={{ fontWeight: 'bold', fontSize: '0.95rem', color: theme.text }}>{row.customer_name}</div>
-                              <div style={{ display: 'flex', gap: '6px', marginTop: '8px', flexWrap: 'wrap' }}>
-                                <span style={{ backgroundColor: theme.tableHeader, color: theme.text, padding: '3px 8px', borderRadius: '4px', fontSize: '0.75rem', border: `1px solid ${theme.tableBorder}` }}>{row.industry}</span>
-                                {row.is_pep === 1 && <span style={{ backgroundColor: theme.danger, color: 'white', padding: '3px 8px', borderRadius: '4px', fontSize: '0.75rem', fontWeight: 'bold' }}>PEP</span>}
-                                {row.account_status === 'Dormant' && <span style={{ backgroundColor: theme.warning, color: '#000', padding: '3px 8px', borderRadius: '4px', fontSize: '0.75rem', fontWeight: 'bold' }}>Dormant</span>}
-                              </div>
-                            </td>
-
-                            <td style={{ padding: '15px' }}>
-                              <div style={{ marginBottom: '8px' }}>
-                                <span style={{ fontSize: '0.85rem', color: theme.subText }}>Base Risk: </span>
-                                <span style={{ fontWeight: 'bold', color: row.risk_score > 80 ? theme.danger : theme.warning, fontSize: '0.95rem' }}>{row.risk_score}/100</span>
-                              </div>
-                              <div>
-                                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', color: theme.subText, marginBottom: '4px' }}>
-                                  <span>ML Prediction</span>
-                                  <span style={{fontWeight:'bold', color: theme.text}}>{row.ml_probability}%</span>
+                              
+                              <td style={{ padding: '15px' }}>
+                                <div style={{ fontSize: '0.8rem', color: theme.subText, fontFamily: 'monospace' }}>ID: {row.transaction_id?.split('-')[0] || 'N/A'}...</div>
+                                <div style={{ fontWeight: 'bold', color: theme.text, marginTop: '4px' }}>{row.transaction_date}</div>
+                                <div style={{ fontWeight: 'bold', fontSize: '1.05rem', color: theme.danger, marginTop: '4px' }}>MYR {row.amount?.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+                                <div style={{ fontSize: '0.8rem', color: theme.subText, marginTop: '4px' }}>Route: <span style={{fontWeight: 'bold', color: theme.text}}>{row.beneficiary_country}</span> {row.is_cross_border === 1 && <span style={{color:theme.secondary, fontWeight:'bold'}}>(Cross-Border)</span>}</div>
+                                
+                                {row.violation_reason && (
+                                  <div style={{ marginTop: '8px' }}>
+                                    <span style={{ display: 'inline-block', backgroundColor: theme.badgeBg, color: theme.secondary, padding: '4px 8px', borderRadius: '12px', fontSize: '0.75rem', fontWeight: 'bold', border: `1px solid ${theme.secondary}` }}>
+                                      🚨 {row.violation_reason}
+                                    </span>
+                                  </div>
+                                )}
+                              </td>
+                              
+                              <td style={{ padding: '15px' }}>
+                                <div style={{ fontWeight: 'bold', fontSize: '0.95rem', color: theme.text }}>{row.customer_name}</div>
+                                <div style={{ display: 'flex', gap: '6px', marginTop: '8px', flexWrap: 'wrap' }}>
+                                  <span style={{ backgroundColor: theme.tableHeader, color: theme.text, padding: '3px 8px', borderRadius: '4px', fontSize: '0.75rem', border: `1px solid ${theme.tableBorder}` }}>{row.industry}</span>
+                                  {row.is_pep === 1 && <span style={{ backgroundColor: theme.danger, color: 'white', padding: '3px 8px', borderRadius: '4px', fontSize: '0.75rem', fontWeight: 'bold' }}>PEP</span>}
+                                  {row.account_status === 'Dormant' && <span style={{ backgroundColor: theme.warning, color: '#000', padding: '3px 8px', borderRadius: '4px', fontSize: '0.75rem', fontWeight: 'bold' }}>Dormant</span>}
                                 </div>
-                                <div style={{ width: '120px', backgroundColor: theme.tableBorder, borderRadius: '4px', height: '8px', overflow: 'hidden' }}>
-                                  <div style={{ width: `${row.ml_probability || 0}%`, backgroundColor: (row.ml_probability || 0) > 80 ? theme.danger : theme.warning, height: '100%' }}></div>
-                                </div>
-                              </div>
-                            </td>
+                              </td>
 
-                            <td style={{ padding: '15px' }}>
-                              {row.review_status === 'Approved' ? ( <span style={{ color: theme.success, fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '5px' }}>✅ STR Filed</span>
-                              ) : row.review_status === 'Rejected' ? ( <span style={{ color: theme.subText, fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '5px' }}>🗑️ Cleared</span>
-                              ) : row.review_status === 'Escalated' ? (
-                                  user.role === 'manager' ? (
-                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                                        <button onClick={() => handleReview(row.transaction_id, 'Approved')} style={{ backgroundColor: theme.success, color: 'white', border: 'none', padding: '6px 10px', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 'bold' }}>Approve STR</button>
-                                        <button onClick={() => handleReview(row.transaction_id, 'Rejected')} style={{ backgroundColor: theme.danger, color: 'white', border: 'none', padding: '6px 10px', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 'bold' }}>Reject</button>
-                                    </div>
-                                  ) : ( <span style={{ color: theme.warning, fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '5px' }}>⚠️ Escalated</span> )
-                              ) : ( <span style={{ color: theme.warning, fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '5px' }}>⏳ Pending Triage</span> )}
-                            </td>
-                          </tr>
-                        ))}
+                              <td style={{ padding: '15px' }}>
+                                <div style={{ marginBottom: '8px' }}>
+                                  <span style={{ fontSize: '0.85rem', color: theme.subText }}>Base Risk: </span>
+                                  <span style={{ fontWeight: 'bold', color: row.risk_score > 80 ? theme.danger : theme.warning, fontSize: '0.95rem' }}>{row.risk_score}/100</span>
+                                </div>
+                                <div>
+                                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', color: theme.subText, marginBottom: '4px' }}>
+                                    <span>ML Prediction</span>
+                                    <span style={{fontWeight:'bold', color: theme.text}}>{row.ml_probability}%</span>
+                                  </div>
+                                  <div style={{ width: '120px', backgroundColor: theme.tableBorder, borderRadius: '4px', height: '8px', overflow: 'hidden' }}>
+                                    <div style={{ width: `${row.ml_probability || 0}%`, backgroundColor: (row.ml_probability || 0) > 80 ? theme.danger : theme.warning, height: '100%' }}></div>
+                                  </div>
+                                </div>
+                              </td>
+
+                              <td style={{ padding: '15px' }}>
+                                {row.review_status === 'Approved' ? ( <span style={{ color: theme.success, fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '5px' }}>✅ STR Filed</span>
+                                ) : row.review_status === 'Rejected' ? ( <span style={{ color: theme.subText, fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '5px' }}>🗑️ Cleared</span>
+                                ) : row.review_status === 'Escalated' ? (
+                                    user.role === 'senior' ? (
+                                      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                                          <button onClick={() => handleReview(row.transaction_id, 'Approved')} style={{ backgroundColor: theme.success, color: 'white', border: 'none', padding: '6px 10px', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 'bold' }}>Approve STR</button>
+                                          <button onClick={() => handleReview(row.transaction_id, 'Rejected')} style={{ backgroundColor: theme.danger, color: 'white', border: 'none', padding: '6px 10px', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 'bold' }}>Reject</button>
+                                      </div>
+                                    ) : ( <span style={{ color: theme.warning, fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '5px' }}>⚠️ Escalated</span> )
+                                ) : ( <span style={{ color: theme.warning, fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '5px' }}>⏳ Pending Triage</span> )}
+                              </td>
+                            </tr>
+                          )
+                        })}
                       </tbody>
                     </table>
                   </div>
@@ -544,7 +595,7 @@ function App() {
               </>
             )}
 
-            {/* VIEW 2: MANAGER REPORT VIEW */}
+            {/* VIEW 2: SENIOR REPORT VIEW */}
             {activeTab === 'report' && (
                <div style={{ ...cardStyle, height: '100%', minHeight: '600px', display: 'flex', flexDirection: 'column' }}>
                  <h3 style={{ margin: '0 0 10px 0', color: theme.secondary, fontSize: '1.4rem' }}>📑 Automated Suspicious Transaction Report (NLG)</h3>
