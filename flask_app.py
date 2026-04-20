@@ -26,10 +26,10 @@ except Exception as e:
     ml_model = None
 
 # --- 3. MOCK DATABASE FOR AUTHENTICATION ---
-# In a real enterprise app, this would be connected to a secure database or Active Directory
+# Updated to match the Junior/Senior L1/L2 workflow
 MOCK_USERS = {
-    "analyst": {"name": "Alice (Junior Analyst)", "role": "analyst", "password": "123"},
-    "manager": {"name": "Bob (Compliance Manager)", "role": "manager", "password": "123"}
+    "junior": {"name": "Alice (Junior Analyst)", "role": "junior", "password": "123"},
+    "senior": {"name": "Bob (Senior Manager)", "role": "senior", "password": "123"}
 }
 
 # ==========================================
@@ -51,15 +51,14 @@ def login():
 
 @app.route('/review_transaction', methods=['POST'])
 def review_transaction():
-    """Mock endpoint to handle single transaction reviews by Managers."""
+    """Mock endpoint to handle single transaction reviews by Seniors."""
     data = request.get_json()
     # In a production environment, you would run an UPDATE SQL query here
-    # e.g., UPDATE transactions SET review_status = ? WHERE transaction_id = ?
     return jsonify({"status": "success", "message": "Transaction review saved."})
 
 @app.route('/bulk_review', methods=['POST'])
 def bulk_review():
-    """Mock endpoint to handle bulk actions by Analysts."""
+    """Mock endpoint to handle bulk actions by Juniors and Seniors."""
     data = request.get_json()
     return jsonify({"status": "success", "message": f"Processed {len(data.get('transaction_ids', []))} transactions."})
 
